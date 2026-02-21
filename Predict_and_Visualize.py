@@ -2,7 +2,7 @@ import joblib
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from Simulation_Calculation import draw_field # 確保這個檔案在同目錄
+from Draw_Utils import draw_field 
 import random # 導入 random 模組
 
 # --- 核心物理模擬函式 (支援自定義 Cd 並回傳飛行時間) ---
@@ -224,7 +224,7 @@ if __name__ == "__main__":
         'text_alpha': 0.8
     }
     
-    test_sets = 10  # 測試組數量
+    test_sets = 2  # 測試組數量
     print(f"--- 開始進行 {test_sets} 組隨機數據測試 ---")
     for i in range(test_sets):
         speed_mph = random.uniform(50, 110)

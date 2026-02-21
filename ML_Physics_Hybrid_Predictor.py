@@ -1,7 +1,7 @@
 import joblib
 import numpy as np
 import matplotlib.pyplot as plt
-from Simulation_Calculation import calculate_trajectory, draw_field
+from Draw_Utils import calculate_trajectory, draw_field
 
 def find_effective_trajectory(v_kmh, angle_deg, direction_deg, target_dist_m):
     """

@@ -2,16 +2,26 @@ import math
 import numpy as np
 import matplotlib.pyplot as plt
 
-def calculate_trajectory(v_kmh, angle_deg, direction_deg, start_pos):
+"""
+Phsical_Params = {
+    'g': 9.81,        # 重力加速度 (m/s^
+    'rho': 1.225,    # 空氣密度 (kg/m^3)
+    'area': 0.00421, # 棒球截面積 (m^2)
+    'm': 0.145,       # 棒球質量 (kg)
+    'dt': 0.01,        # 模擬時間步長 (秒)
+    'hit_pos': (0, 0, 1.0)  # 擊球位置 (x, y, z) (m)
+}
+"""
+def calculate_trajectory(v_kmh, angle_deg, direction_deg, physical_params, Cd=0.30):
     # --- 物理常數 ---
-    g = 9.81
-    rho = 1.225      # 空氣密度 (kg/m^3)
-    Cd = 0.30        # 棒球阻力係數
-    area = 0.00421   # 棒球截面積 (m^2)
-    m = 0.145        # 棒球質量 (kg)
-    dt = 0.01        # 模擬時間步長 (秒)
+    g = physical_params['g']
+    rho = physical_params['rho']
+    area = physical_params['area']
+    m = physical_params['m']
+    dt = physical_params['dt']
+    hit_pos = physical_params['hit_pos']
 
-    x0, y0, z0 = start_pos
+    x0, y0, z0 = hit_pos
     v0 = v_kmh * (1000 / 3600)
     theta = math.radians(angle_deg)
     phi = math.radians(direction_deg)
@@ -55,8 +65,8 @@ def calculate_trajectory(v_kmh, angle_deg, direction_deg, start_pos):
 
     return {
         "x": np.array(x), "y": np.array(y), "z": np.array(z), 
-        "phi": direction_deg, "v_kmh": v_kmh,
-        "flight_time": t,
+        #"phi": direction_deg, "v_kmh": v_kmh,
+        "hang_time": t,
         "distance": math.sqrt(x[-1]**2 + y[-1]**2)
     }
 

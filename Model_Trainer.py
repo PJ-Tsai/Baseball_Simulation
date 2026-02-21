@@ -9,9 +9,33 @@ import warnings
 
 warnings.filterwarnings("ignore")
 
-# 全域設定
-LABEL_MAP = {'OUT': 0, 'SINGLE': 1, 'DOUBLE': 2, 'TRIPLE': 3, 'HR': 4}
-DATA_DIR = "datasets"
+LABEL_MAP = {'OUT': 0, 'SINGLE': 1, 'DOUBLE': 2, 'TRIPLE': 3, 'HR': 4} # one-hot 編碼的類別映射
+DATA_DIR = "datasets" # 預設數據資料夾
+"""
+Model Trainer 模組說明：
+1. 功能 A: 全量訓練 (train_full)
+    - 輸入：一個或多個 CSV 檔案，包含 Statcast 數據。
+    - 流程：合併數據、預處理、三相切分 (訓練/驗證/測試)、訓練 XGBoost 分類器與迴歸器、儲存模型 Bundle。
+2. 功能 B: 增量訓練 (train_incremental)
+    - 輸入：一個新的 CSV 檔案，和已存在的模型檔案。
+    - 流程：載入現有模型 Bundle、預處理新數據、切分訓練/驗證集、接續訓練分類器與迴歸器（包含 eval_set）、儲存更新後的模型 Bundle。
+
+全局設定：
+    - LABEL_MAP：將擊球結果映射為數字類別。
+    - DATA_DIR：預設的數據存放資料夾。 
+
+預處理函式 preprocess_data：
+    - 將 result_label 映射為 target_class。
+    - 填補 spray_angle 的缺失值為 999。
+    - 對 bb_type 進行 one-hot encoding。
+模型訓練參數 get_common_params：
+    - 定義 XGBoost 模型的共用參數，如 tree_method、device、random_state 和 early_stopping_rounds。
+
+訓練流程：
+- train_full：從零開始訓練或合併多檔數
+據，包含超參數搜尋。
+- train_incremental：接續現有模型訓練，包含 eval_set 以確保增量訓練的穩定性。
+"""
 
 def preprocess_data(df, features_list=None):
     """統一的數據預處理邏輯"""
