@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import xgboost as xgb
 from sklearn.model_selection import train_test_split, RandomizedSearchCV
+from sklearn.metrics import f1_score
 import joblib
 import os
 import argparse
@@ -9,8 +10,9 @@ import warnings
 
 warnings.filterwarnings("ignore")
 
-LABEL_MAP = {'OUT': 0, 'SINGLE': 1, 'DOUBLE': 2, 'TRIPLE': 3, 'HR': 4} # one-hot 編碼的類別映射
-DATA_DIR = "datasets" # 預設數據資料夾
+# 全域設定
+LABEL_MAP = {'OUT': 0, 'SINGLE': 1, 'DOUBLE': 2, 'TRIPLE': 3, 'HR': 4}
+DATA_DIR = "datasets"
 """
 Model Trainer 模組說明：
 1. 功能 A: 全量訓練 (train_full)
@@ -36,157 +38,127 @@ Model Trainer 模組說明：
 據，包含超參數搜尋。
 - train_incremental：接續現有模型訓練，包含 eval_set 以確保增量訓練的穩定性。
 """
-
-def preprocess_data(df, features_list=None):
-    """統一的數據預處理邏輯"""
-    df['target_class'] = df['result_label'].map(LABEL_MAP)
-    df = df.dropna(subset=['target_class']).copy()
-    df['spray_angle'] = df['spray_angle'].fillna(999)
-    df = pd.get_dummies(df, columns=['bb_type'], prefix='type')
-    
-    if features_list is None:
-        features = ['launch_speed', 'launch_angle', 'spray_angle']
-        features += [c for c in df.columns if c.startswith('type_')]
-    else:
-        features = features_list
-        for col in features:
-            if col not in df.columns: df[col] = 0
-    return df, features
-
-def get_common_params():
-    # 模型訓練的共用參數
-    return {
-        'tree_method': 'hist',
-        'device': 'cuda',
+def get_base_params(is_regressor=True):
+    """
+    根據定義返回 GPU 訓練參數
+    """
+    params = {
+        'tree_method': 'hist', # XGBoost 2.0+ 建議使用 hist 搭配 device
+        'device': 'cuda',      # 啟用 GPU
         'random_state': 42,
         'early_stopping_rounds': 15
     }
+    if not is_regressor:
+        params['objective'] = 'multi:softprob'
+        params['num_class'] = 5
+    return params
 
-# --- 功能 A: 全量訓練 (從零開始或合併多檔) ---
+def align_and_preprocess(df, reg_feat=None, clf_feat=None):
+    """統一預處理與特徵對齊"""
+    df = df.copy()
+    df['target_class'] = df['result_label'].map(LABEL_MAP)
+    df = df.dropna(subset=['target_class', 'hit_distance_sc'])
+    
+    # One-hot 擊球類型
+    df = pd.get_dummies(df, columns=['bb_type'], prefix='type')
+    
+    if reg_feat is None:
+        reg_feat = ['launch_speed', 'launch_angle', 'spray_angle']
+        reg_feat += [c for c in df.columns if c.startswith('type_')]
+    
+    if clf_feat is None:
+        clf_feat = reg_feat + ['hit_distance_sc'] # 串接：分類器特徵包含距離
+
+    # 增量訓練關鍵：補齊缺失特徵
+    for col in clf_feat:
+        if col not in df.columns:
+            df[col] = 0
+            
+    return df, reg_feat, clf_feat
+
 def train_full(csv_files, model_name):
-    print(f"--- 啟動全量訓練 (檔案數: {len(csv_files)}) ---")
+    print(f"--- 啟動全量訓練 ---")
     df_list = []
     for f in csv_files:
-        try:
-            df = pd.read_csv(f)
-            if not df.empty:
-                df_list.append(df)
-            else:
-                print(f"警告: 檔案 {f} 是空的，已跳過。")
-        except Exception as e:
-            print(f"錯誤: 無法讀取檔案 {f}。原因: {e}")
+        path = os.path.join(DATA_DIR, f)
+        if os.path.exists(path):
+            df_list.append(pd.read_csv(path))
+        else:
+            print(f"找不到檔案: {path}") # 增加警示
 
-    # --- 檢查點 ---
     if not df_list:
-        print("df_list 是空的，沒有資料可以合併！請檢查檔案路徑。")
-        return 
-
-    combined_df = pd.concat(df_list, axis=0, ignore_index=True)
+        print("錯誤：完全讀取不到任何資料，請檢查路徑與檔名！")
+        return # 強制中斷，避免進入評估
     
-    df, features = preprocess_data(combined_df)
+    df_list = [pd.read_csv(os.path.join(DATA_DIR, f)) for f in csv_files if os.path.exists(os.path.join(DATA_DIR, f))]
+    if not df_list: return
     
-    # 三相切分
-    X_temp, X_test, y_temp, y_test = train_test_split(
-        df[features], df[['target_class', 'hit_distance_sc']], 
-        test_size=0.15, random_state=42, stratify=df['target_class']
-    )
-    X_train, X_val, y_train, y_val = train_test_split(
-        X_temp, y_temp, test_size=0.176, random_state=42, stratify=y_temp['target_class']
-    )
+    full_df = pd.concat(df_list, axis=0, ignore_index=True)
+    df, reg_feat, clf_feat = align_and_preprocess(full_df)
+    
+    train_df, temp_df = train_test_split(df, test_size=0.3, random_state=42)
+    val_df, test_df = train_test_split(temp_df, test_size=0.5, random_state=42)
 
-    # 模型訓練參數
+    # 搜尋空間
     param_dist = {
-        'n_estimators': [500, 800, 1000], 
-        'learning_rate': [0.07, 0.1, 0.01, 0.05],
+        'n_estimators': [500, 800],
+        'learning_rate': [0.01, 0.05, 0.1],
         'max_depth': [8, 10, 12],
-        'subsample': [0.6, 0.8],
-        'colsample_bytree': [0.8],
-        'gamma': [0.1, 0.5, 1]    # 新增 gamma：節點分裂所需的最小損失減少量，能有效抑制樹的生長
+        'subsample': [0.8],
+        'gamma': [0.1, 0.5]
     }
 
-    print(f"--- 啟動擊球落點模型訓練 ---")
-    print(f"訓練樣本: {len(X_train)} | 分類目標: 5 類 (無界外)")
+    # 1. 訓練距離迴歸器
+    print("Step 1: 尋找距離迴歸器最佳參數...")
+    base_reg = xgb.XGBRegressor(**get_base_params(True))
+    rs_reg = RandomizedSearchCV(base_reg, param_dist, n_iter=5, cv=3, scoring='neg_mean_absolute_error')
+    rs_reg.fit(train_df[reg_feat], train_df['hit_distance_sc'],
+               eval_set=[(val_df[reg_feat], val_df['hit_distance_sc'])], verbose=False)
+    regressor = rs_reg.best_estimator_
 
-    print("正在訓練擊球類型分類模型...")
-    # 訓練分類器
-    xgb_clf = xgb.XGBClassifier(**get_common_params(), objective='multi:softprob')
-    rs_clf = RandomizedSearchCV(xgb_clf, param_dist, n_iter=5, cv=3, scoring='f1_weighted')
-    rs_clf.fit(X_train, y_train['target_class'], eval_set=[(X_val, y_val['target_class'])], verbose=False)
+    # 2. 訓練結果分類器
+    print("Step 2: 尋找結果分類器最佳參數...")
+    base_clf = xgb.XGBClassifier(**get_base_params(False))
+    rs_clf = RandomizedSearchCV(base_clf, param_dist, n_iter=5, cv=3, scoring='f1_weighted')
+    rs_clf.fit(train_df[clf_feat], train_df['target_class'],
+               eval_set=[(val_df[clf_feat], val_df['target_class'])], verbose=False)
+    classifier = rs_clf.best_estimator_
 
-    # 訓練迴歸器
-    print("正在訓練飛行距離迴歸模型...")
-    reg_mask = y_train['hit_distance_sc'].notna()
-    val_reg_mask = y_val['hit_distance_sc'].notna()
-    xgb_reg = xgb.XGBRegressor(**get_common_params())
-    rs_reg = RandomizedSearchCV(xgb_reg, param_dist, n_iter=5, cv=3, scoring='neg_mean_absolute_error')
-    rs_reg.fit(X_train[reg_mask], y_train['hit_distance_sc'][reg_mask], 
-               eval_set=[(X_val[val_reg_mask], y_val['hit_distance_sc'][val_reg_mask])], verbose=False)
-
+    # 存檔
     bundle = {
-        'classifier': rs_clf.best_estimator_, 'regressor': rs_reg.best_estimator_,
-        'features': features, 'label_map': LABEL_MAP, 'test_data': (X_test, y_test)
+        'classifier': classifier, 'regressor': regressor,
+        'reg_features': reg_feat, 'clf_features': clf_feat,
+        'label_map': LABEL_MAP,
+        'test_data': (test_df, test_df[['target_class', 'hit_distance_sc']]),
     }
     joblib.dump(bundle, model_name)
-    print(f"成功儲存全新模型: {model_name}")
+    print(f"模型訓練完成並儲存: {model_name}")
 
-# --- 功能 B: 增量訓練 (接續現有模型) ---
-def train_incremental(csv_file, model_name):
-    if os.path.exists(csv_file):
-        target_path = csv_file
-    else:
-        target_path = os.path.join(DATA_DIR, csv_file)
-
-    if not os.path.exists(target_path):
-        print(f"錯誤: 找不到數據檔案 '{target_path}'")
-        return
-
-    print(f"--- 啟動增量訓練: {target_path} ---")
+def train_incremental(new_csv, model_name):
+    print(f"--- 啟動增量接續訓練 ---")
     bundle = joblib.load(model_name)
+    df_new = pd.read_csv(os.path.join(DATA_DIR, new_csv))
+    df_new, _, _ = align_and_preprocess(df_new, bundle['reg_features'], bundle['clf_features'])
     
-    # 預處理新數據
-    df_raw = pd.read_csv(target_path)
-    df_new, _ = preprocess_data(df_raw, bundle['features'])
+    train_df, val_df = train_test_split(df_new, test_size=0.2, random_state=42)
     
-    # 分割訓練與驗證集
-    X_train, X_val, y_train, y_val = train_test_split(
-        df_new[bundle['features']], 
-        df_new[['target_class', 'hit_distance_sc']], 
-        test_size=0.2, 
-        random_state=42, 
-        stratify=df_new['target_class']
-    )
+    # 增量參數：降低學習率，不進行 RandomizedSearch 以維持穩定
+    inc_params = {'learning_rate': 0.01, 'n_estimators': 100, 'device': 'cuda'}
 
-    inc_params = {'learning_rate': 0.01, 'early_stopping_rounds': 10}
-    
-    # 1. 接續分類器訓練 (已包含 eval_set)
-    print("正在更新分類模型...")
+    print("更新迴歸器...")
+    bundle['regressor'].set_params(**inc_params)
+    bundle['regressor'].fit(train_df[bundle['reg_features']], train_df['hit_distance_sc'],
+                            xgb_model=bundle['regressor'].get_booster(),
+                            eval_set=[(val_df[bundle['reg_features']], val_df['hit_distance_sc'])], verbose=False)
+
+    print("更新分類器...")
     bundle['classifier'].set_params(**inc_params)
-    bundle['classifier'].fit(
-        X_train, y_train['target_class'], 
-        xgb_model=bundle['classifier'].get_booster(),
-        eval_set=[(X_val, y_val['target_class'])], 
-        verbose=False
-    )
-    
-    # 2. 接續迴歸器訓練 (修正重點：加入 eval_set)
-    print("正在更新迴歸模型...")
-    reg_mask = y_train['hit_distance_sc'].notna()
-    val_reg_mask = y_val['hit_distance_sc'].notna()
-    
-    if reg_mask.any() and val_reg_mask.any():
-        bundle['regressor'].set_params(**inc_params)
-        bundle['regressor'].fit(
-            X_train[reg_mask], y_train['hit_distance_sc'][reg_mask], 
-            xgb_model=bundle['regressor'].get_booster(),
-            eval_set=[(X_val[val_reg_mask], y_val['hit_distance_sc'][val_reg_mask])], # 補上這行
-            verbose=False
-        )
-    else:
-        print("警告：新數據中缺乏有效的距離資料，跳過迴歸器更新。")
+    bundle['classifier'].fit(train_df[bundle['clf_features']], train_df['target_class'],
+                             xgb_model=bundle['classifier'].get_booster(),
+                             eval_set=[(val_df[bundle['clf_features']], val_df['target_class'])], verbose=False)
 
-    # 儲存更新後的 Bundle
     joblib.dump(bundle, model_name)
-    print(f"模型更新成功: {model_name}")
+    print(f"增量模型更新完成。")
 
 if __name__ == "__main__":
     """

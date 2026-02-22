@@ -1,77 +1,83 @@
-import joblib
-import numpy as np
-import matplotlib.pyplot as plt
-from Draw_Utils import calculate_trajectory, draw_field
+from Predictor_Engine import BaseballPredictorEngine
+import pandas as pd
+import argparse
+import re
+import random
 
-def find_effective_trajectory(v_kmh, angle_deg, direction_deg, target_dist_m):
-    """
-    透過二分搜尋法找到一個有效阻力係數 Cd，使得模擬距離等於模型預測距離
-    """
-    low_cd, high_cd = 0.1, 1.0  # 阻力係數的可能範圍
-    best_sim = None
+def batch_process_csv(engine, csv_path, ev_boost=1.0, dist_boost=1.0):
+    """批量讀取 CSV 並執行預測"""
+    print(f"--- 批量處理模式: {csv_path} ---")
+    df = pd.read_csv(csv_path)
+    # 假設 CSV 包含 launch_speed, launch_angle, spray_angle
+    # Format Check
+    required_cols = ['launch_speed', 'launch_angle', 'spray_angle']
+    if not all(col in df.columns for col in required_cols):
+        print(f"錯誤：CSV 必須包含以下欄位: {required_cols}")
+        return
     
-    # 進行 10 次迭代即可達到極高精度
-    for _ in range(10):
-        mid_cd = (low_cd + high_cd) / 2
-        # 暫時修改物理模擬中的 Cd 邏輯 (這裡假設我們微調原本的函式)
-        # 為了不改動原檔案，我們在此處模擬 calculate_trajectory 的行為
-        sim_data = calculate_trajectory_with_custom_cd(v_kmh, angle_deg, direction_deg, (0,0,1.0), mid_cd)
-        
-        # 計算落地距離 (最後一個點的 x, y 向量長度)
-        sim_dist = np.sqrt(sim_data['x'][-1]**2 + sim_data['y'][-1]**2)
-        
-        if sim_dist > target_dist_m:
-            low_cd = mid_cd  # 飛太遠，增加阻力
-        else:
-            high_cd = mid_cd # 飛太近，減少阻力
-        best_sim = sim_data
+    for idx, row in df.iterrows():
+        print(f"處理第 {idx+1} 筆數據...")
+        engine.run_inference(row['launch_speed'], row['launch_angle'], row['spray_angle'], show_plot=False, ev_boost=ev_boost, dist_boost=dist_boost)
+    print("批量處理完成。")
+
+def real_time_input_mode(engine, ev_boost=1.0, dist_boost=1.0):
+    """持續接收外部輸入模式"""
+    print("--- 即時輸入模式啟動 (輸入 'exit' 退出) ---")
+    while True:
+        try:
+            val = input("請輸入擊球參數 (初速,仰角,噴射角) 例如 105,25,10 : ")
+            if val.lower() == 'exit': break
             
-    return best_sim, mid_cd
+            s, a, d = map(float, re.split(r'[,\s]+', val.strip())) # 支持逗號或空格分隔
+            engine.run_inference(s, a, d, ev_boost=1.0, dist_boost=1.0) # 預設不開啟 Cheat Mode
+            # Test code start
+            if ev_boost != 1.0 or dist_boost != 1.0:
+                print("補償增益後數據")
+                engine.run_inference(s, a, d, ev_boost=ev_boost, dist_boost=dist_boost) # 補償增益後預測
+            # Test code end
 
-def calculate_trajectory_with_custom_cd(v_kmh, angle_deg, direction_deg, start_pos, custom_cd):
-    # 這是原本 Simulation_Calculation.py 的邏輯，但允許自定義 Cd
-    g, rho, area, m, dt = 9.81, 1.225, 0.00421, 0.145, 0.01
-    x, y, z = [start_pos[0]], [start_pos[1]], [start_pos[2]]
-    v0 = v_kmh * (1000 / 3600)
-    theta, phi = np.radians(angle_deg), np.radians(direction_deg)
-    vx, vy, vz = v0 * np.cos(theta) * np.cos(phi), v0 * np.cos(theta) * np.sin(phi), v0 * np.sin(theta)
-    
-    curr_x, curr_y, curr_z = start_pos
-    while curr_z >= 0:
-        v = np.sqrt(vx**2 + vy**2 + vz**2)
-        f_drag = 0.5 * rho * v**2 * custom_cd * area
-        ax = -(f_drag * (vx / v)) / m
-        ay = -(f_drag * (vy / v)) / m
-        az = -g - (f_drag * (vz / v)) / m
-        vx += ax * dt; vy += ay * dt; vz += az * dt
-        curr_x += vx * dt; curr_y += vy * dt; curr_z += vz * dt
-        x.append(curr_x); y.append(curr_y); z.append(curr_z)
-    return {'x': x, 'y': y, 'z': z}
+        except ValueError:
+            print("格式錯誤，請確保輸入為三個數字並以逗號分隔。")
+        except KeyboardInterrupt:
+            break
 
-# --- 主程式：結合模型預測 ---
-def run_hybrid_prediction(speed_mph, angle_deg, spray_deg):
-    # 1. 載入模型並預測距離
-    model_data = joblib.load('baseball_dual_model.pkl')
-    reg = model_data['regressor'].set_params(device="cpu")
+if __name__ == "__main__":
+    # 初始化引擎 (只載入模型一次，效率最高)
+    # Get ev_boost and dist_boost from script
+    ev_boost = 1.0
+    dist_boost = 1.0
+    parser = argparse.ArgumentParser(description="Baseball Predictor Engine with Optional Boosts")
+    parser.add_argument('--model', type=str, default="baseball_dual_model.pkl", help='模型檔案路徑')
+    parser.add_argument('--ev_boost', type=float, default=1.0, help='EV 補償增益係數 (預設 1.0, 大於 1.0 為增強)')
+    parser.add_argument('--dist_boost', type=float, default=1.0, help='距離補償增益係數 (預設 1.0, 大於 1.0 為增強)')
+    args = parser.parse_args()
+    model_path = args.model
+    ev_boost = args.ev_boost
+    dist_boost = args.dist_boost
+
+    engine = BaseballPredictorEngine(model_path=model_path)
+    if(ev_boost != 1.0 or dist_boost != 1.0):
+            print(f"注意: 已啟用補償增益 (EV Boost: {ev_boost}, Distance Boost: {dist_boost})")
+
+    print("請選擇模式: (1) 批量 CSV 處理  (2) 即時手動輸入  (3) 隨機生成 n 筆測試數據並預測")
+    choice = input("選擇: ")
+
+    if choice == '1':
+        path = input("請輸入 CSV 路徑: ")
+        batch_process_csv(engine, path, ev_boost, dist_boost)
+    elif choice == '2':
+        real_time_input_mode(engine, ev_boost, dist_boost)
+    elif choice == '3':
+        test_sets = int(input("請輸入要生成的測試數據筆數: "))
+        for i in range(test_sets):
+            speed_mph = random.uniform(50, 110)
+            angle_deg = random.uniform(-15, 60) 
+            spray_deg = random.uniform(-60, 60) # 包含界外角度
+
+            print(f"\n--- 測試組 {i+1} ---")
+            engine.run_inference(speed_mph, angle_deg, spray_deg, ev_boost=ev_boost, dist_boost=dist_boost)
+    else:
+        print("無效選項，退出。")
+
+
     
-    # 構造輸入 (簡化版，請確保與你訓練時的 features 一致)
-    # 假設輸入包含: speed, angle, spray, is_fair
-    input_df = ... # 此處略過 features 構造，參考前次 Predict_and_Visualize.py
-    
-    pred_dist_ft = reg.predict(input_df)[0]
-    target_dist_m = pred_dist_ft * 0.3048 # 轉公制
-    
-    # 2. 反推物理曲線
-    v_kmh = speed_mph * 1.60934
-    direction_deg = 45 + spray_deg
-    fitted_traj, effective_cd = find_effective_trajectory(v_kmh, angle_deg, direction_deg, target_dist_m)
-    
-    # 3. 繪圖
-    fig = plt.figure(figsize=(10, 7))
-    ax = fig.add_subplot(111, projection='3d')
-    draw_field(ax)
-    ax.plot(fitted_traj['x'], fitted_traj['y'], fitted_traj['z'], color='blue', lw=3, label='ML-Fitted Trajectory')
-    
-    print(f"預測距離: {pred_dist_ft:.1f} ft")
-    print(f"反推有效阻力係數 (Effective Cd): {effective_cd:.3f}")
-    plt.show()

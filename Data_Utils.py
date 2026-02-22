@@ -110,7 +110,7 @@ def combine_datasets(csv_list, data_dir="datasets"):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="MLB Static Data Fetcher")
-    parser.add_argument("--year", type=str, required=True, help="Year of Data (e.g., 2024)")
+    parser.add_argument("--year", type=str, required=True, help="Year of Data (2015-2026)")
     parser.add_argument("--month", type=str, required=True, help="Month of Data (3-11)")
     parser.add_argument("--dir", type=str, default="datasets", help="Data Directory")
     

@@ -23,12 +23,15 @@ class BaseballPredictorEngine:
         try:
             # 載入模型 Bundle
             self.data_bundle = joblib.load(model_path)
-            # 強制使用 CPU 進行推理以提高相容性
+            # 強制使用 CPU 進行推理
             self.clf = self.data_bundle['classifier'].set_params(device="cpu")
             self.reg = self.data_bundle['regressor'].set_params(device="cpu")
-            self.features = self.data_bundle['features']
+            
+            # 關鍵修改：區分兩階段特徵
+            self.reg_features = self.data_bundle['reg_features']
+            self.clf_features = self.data_bundle['clf_features']
+            
             self.label_map = self.data_bundle['label_map']
-            # 建立類別名稱清單
             self.target_names = [k for k, v in sorted(self.label_map.items(), key=lambda item: item[1])]
         except Exception as e:
             print(f"引擎啟動失敗: {e}")
@@ -41,69 +44,95 @@ class BaseballPredictorEngine:
         elif 25 <= angle < 50: return 'fly_ball'
         else: return 'popup'
 
-    def find_fitted_trajectory(self, v_kmh, angle_deg, direction_deg, target_dist_m):
-        """使用二分搜尋法找到最符合模型預測距離的有效阻力係數 Cd"""
-        low_cd, high_cd = 0.1, 1.5
-        best_sim = None
-        for _ in range(12): # 12 次迭代足以達到高精度
+    def find_fitted_trajectory(self, v_kmh, angle_deg, spray_deg, target_dist_ft):
+        """根據模型預測的距離，反推物理軌跡"""
+        target_dist_m = target_dist_ft * 0.3048
+        low_cd, high_cd = 0.1, 1.0
+        best_traj = None
+        
+        # 二分搜尋尋找最接近預測距離的 Cd 值
+        for _ in range(10):
             mid_cd = (low_cd + high_cd) / 2
-            sim_data = calculate_trajectory(v_kmh, angle_deg, direction_deg, Phsical_Params, Cd=mid_cd)
+            traj = calculate_trajectory(v_kmh, angle_deg, spray_deg, Phsical_Params, Cd=mid_cd)
+            sim_dist = np.sqrt(traj['x'][-1]**2 + traj['y'][-1]**2)
             
-            if sim_data['distance'] > target_dist_m:
-                low_cd = mid_cd # 飛太遠，增加阻力
+            if sim_dist > target_dist_m:
+                low_cd = mid_cd
             else:
-                high_cd = mid_cd # 飛太近，減少阻力
-            best_sim = sim_data
-        return best_sim, mid_cd
+                high_cd = mid_cd
+            best_traj = traj
+            best_traj['cd'] = mid_cd
+            
+        return best_traj
 
-    def run_inference(self, speed_mph, angle_deg, spray_deg, show_plot=True):
-        """執行ML 預測 + 物理擬合"""
-        is_physically_foul = abs(spray_deg) > 45
+    def adaptive_boost(self, value, boost_factor, boost_type='EV'):
+        """
+        自適應補償增益
+        :param value: 原始數值
+        :param boost_factor: 增益係數 (1.0 為不變)
+        :param target_threshold: 門檻 (低於此值才觸發強補償)
+        :param max_range: 硬性上限
+        """
+        target_threshold = 85 if boost_type == 'EV' else 300
+        max_range = 115 if boost_type == 'EV' else 250
+
+        if boost_factor == 1.0 or value >= target_threshold:
+            return value
+
+        # 計算差距比例 (0.0 ~ 1.0)
+        gap_ratio = max(0, (target_threshold - value) / target_threshold)
+        
+        # 補償公式：基本差距 * 增益倍率 * (1 + 距離衰減修正)
+        compensation = (target_threshold - value) * (boost_factor - 1) * (1 + gap_ratio)
+        new_value = value + compensation
+    
+        return max(value, min(new_value, max_range))
+
+    def run_inference(self, speed_mph, angle_deg, spray_deg, ev_boost=1.0, dist_boost=1.0):
+        """執行 AI 串接預測與物理擬合"""
+        speed_mph = self.adaptive_boost(speed_mph, ev_boost, boost_type='EV') # Cheat Mode: EV Boost
+        v_kmh = speed_mph * 1.60934 # 轉換為 km/h
         bb_type = self._get_bb_type(angle_deg)
-
-        # 1. 構造特徵 DataFrame
-        input_row = {
-            'launch_speed': speed_mph, # 擊球初速
-            'launch_angle': angle_deg, # 擊球仰角
-            'spray_angle': spray_deg # 擊球偏角
-        }
-        # 處理 One-hot 編碼特徵
-        for f in self.features:
-            if f.startswith('type_'):
-                input_row[f] = 1 if f == f"type_{bb_type}" else 0
         
-        input_df = pd.DataFrame([input_row])
-        # 補齊可能缺失的特徵欄位並排序
-        for f in self.features:
-            if f not in input_df.columns: input_df[f] = 0
-        input_df = input_df[self.features]
-
-        # 2. ML 模型預測
-        pred_probs = self.clf.predict_proba(input_df)[0]
-        pred_dist_ft = self.reg.predict(input_df)[0]
+        # 1. 第一階段：迴歸預測飛行距離
+        reg_df = pd.DataFrame([{
+            'launch_speed': speed_mph,
+            'launch_angle': angle_deg,
+            'spray_angle': spray_deg
+        }])
+        # 自動補齊 One-hot 欄位
+        for feat in self.reg_features:
+            if feat.startswith('type_'):
+                reg_df[feat] = 1 if f"type_{bb_type}" == feat else 0
         
-        # 3. 物理軌跡擬合 (將預測距離轉為公尺)
-        v_kmh = speed_mph * 1.60934
-        direction_deg = 45 + spray_deg # 45度為球場中軸線
-        traj, cd = self.find_fitted_trajectory(v_kmh, angle_deg, direction_deg, pred_dist_ft * 0.3048)
+        pred_dist_ft = float(self.reg.predict(reg_df[self.reg_features])[0])
+        pred_dist_ft = self.adaptive_boost(pred_dist_ft, dist_boost, boost_type='DIST') # Cheat Mode: Distance Boost
 
-        # 4. 封裝結果
-        result = {
-            "class": self.target_names[np.argmax(pred_probs)],
-            "hit_prob": sum(pred_probs[1:]), # 排除 'OUT' 的機率
-            "dist_ft": pred_dist_ft,
-            "cd": cd,
-            "trajectory": traj,
-            "bb_type": bb_type,
-            "is_foul": is_physically_foul
-        }
-
-        if show_plot:
-            self.plot_result(speed_mph, angle_deg, spray_deg, result)
+        # 2. 第二階段：分類預測結果 (串接距離特徵)
+        clf_df = reg_df.copy()
+        clf_df['hit_distance_sc'] = pred_dist_ft
+        # 補齊分類器可能需要的額外 One-hot
+        for feat in self.clf_features:
+            if feat not in clf_df.columns: clf_df[feat] = 0
+            
+        y_probs = self.clf.predict_proba(clf_df[self.clf_features])[0]
+        pred_label = self.target_names[np.argmax(y_probs)]
         
-        return result
+        # 3. 物理軌跡擬合
+        fitted_traj = self.find_fitted_trajectory(v_kmh, angle_deg, spray_deg, pred_dist_ft)
+        
+        # 4. 展示結果
+        self.visualize_result(speed_mph, angle_deg, spray_deg, {
+            'class': pred_label,
+            'hit_prob': 1 - y_probs[0],
+            'dist_ft': pred_dist_ft,
+            'trajectory': fitted_traj,
+            'cd': fitted_traj['cd'],
+            'bb_type': bb_type,
+            'is_foul': abs(spray_deg) > 45
+        })
 
-    def plot_result(self, speed_mph, angle_deg, spray_deg, result):
+    def visualize_result(self, speed_mph, angle_deg, spray_deg, result):
         """視覺化繪圖"""
         fig = plt.figure(figsize=(12, 7))
 
