@@ -19,6 +19,7 @@
 
 ## 系統架構
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'background': '#ffffff', 'canvasBackground': '#ffffff' }}}%%
 graph TD
     A[Data_Utils<br/>抓取/清洗] --> B[Model_Trainer<br/>訓練/增量]
     B --> C[Predictor Engine<br/>核心推論引擎]
