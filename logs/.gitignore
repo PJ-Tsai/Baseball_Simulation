@@ -1,0 +1,3 @@
+# .gitignore
+logs/*.log        # 忽略所有 .log 檔案
+!logs/.gitkeep    # 保留 .gitkeep 檔案

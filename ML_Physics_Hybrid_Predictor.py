@@ -1,9 +1,13 @@
 from Predictor_Engine import BaseballPredictorEngine
+from Logger_Setup import setup_logger, ProgressLogger
 import pandas as pd
 import argparse
-import re
 import random
 import datetime
+import os
+
+# 設定日誌
+logger = setup_logger(__name__)
 
 def save_results_to_csv(results, filename_prefix="prediction_results"):
     """將預測結果清單存入 CSV"""
@@ -14,33 +18,40 @@ def save_results_to_csv(results, filename_prefix="prediction_results"):
     if 'trajectory' in df.columns:
         df = df.drop(columns=['trajectory'])
     
+    # 確認 outputs 資料夾存在
+    output_dir = "outputs"
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M")
     filename = f"{filename_prefix}_{timestamp}.csv"
-    df.to_csv(filename, index=False, encoding='utf-8-sig')
-    print(f"\n預測紀錄已儲存至: {filename}")
+    df.to_csv(f"{output_dir}/{filename}", index=False, encoding='utf-8-sig')
+    print(f"\n預測紀錄已儲存至: {output_dir}/{filename}")
 
 def batch_process_csv(engine, csv_path, ev_boost=1.0, dist_boost=1.0):
     """批量讀取 CSV 並執行預測"""
-    print(f"--- 批量處理模式: {csv_path} ---")
+    logger.info(f"批量處理模式: {csv_path}")
     df = pd.read_csv(csv_path)
-    # 假設 CSV 包含 launch_speed, launch_angle, spray_angle
-    # Format Check
+    
     required_cols = ['launch_speed', 'launch_angle', 'spray_angle']
     if not all(col in df.columns for col in required_cols):
-        print(f"錯誤：CSV 必須包含以下欄位: {required_cols}")
+        logger.error(f"CSV 必須包含以下欄位: {required_cols}")
         return
     
     results_list = []
-    for idx, row in df.iterrows():
-        # 設定 Is_plot=False
-        res = engine.run_inference(
-            row['launch_speed'], row['launch_angle'], row['spray_angle'],
-            Is_plot=False, ev_boost=ev_boost, dist_boost=dist_boost
-        )
-        results_list.append(res)
-        if (idx + 1) % 10 == 0: print(f"進度: {idx+1}/{len(df)}")
+    
+    # 使用進度追蹤器
+    with ProgressLogger(len(df), logger, log_interval=10, name="批次預測") as progress:
+        for idx, row in df.iterrows():
+            res = engine.run_inference(
+                row['launch_speed'], row['launch_angle'], row['spray_angle'],
+                Is_plot=False, ev_boost=ev_boost, dist_boost=dist_boost
+            )
+            results_list.append(res)
+            progress.update()
     
     save_results_to_csv(results_list, "batch_output")
+    logger.info(f"批次處理完成，共 {len(results_list)} 筆結果")
 
 def real_time_input_mode(engine, ev_boost=1.0, dist_boost=1.0):
     """持續接收外部輸入模式"""

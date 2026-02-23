@@ -97,9 +97,25 @@ python ML_Physics_Hybrid_Predictor.py --model baseball_dual_model.pkl --ev_boost
 ---
 
 ## 模組詳細說明
+### Config_Loader.py
+- **配置管理系統**：採用單例模式確保整個應用程式使用同一份配置。
+- `get()`：安全地讀取配置值，支援多層級鍵值存取（如 `config.get('model', 'training', 'device')`）。
+- `update()`：動態更新配置值，支援點記法（如 `config.update('model.training.device', 'cpu')`）。
+- **自動目錄建立**：確保資料集和日誌目錄在啟動時就已存在。
+
+### Logger_Setup.py
+- **完整日誌系統**：統一管理所有模組的日誌輸出。
+- `setup_logger()`：建立具名 **logger**，自動區分不同模組的日誌。
+- **自動輪替機制**：日誌檔案超過 **10MB** 自動備份，保留最近 **5** 個檔案。
+- **雙輸出支援**：同時輸出到控制台（即時監控）和檔案（永久記錄）。
+- `log_execution_time()`：裝飾器，自動記錄函式執行時間，便於效能分析。
+- `ProgressLogger`：進度追蹤器，適合批次處理時顯示進度（如 `50/100 (50.0%)`）。
+
 ### Data_Utils.py
 - `date_check()`：確保月份在 3\~11 月，且不超過當前日期。（MLB季賽在 3\~11 月間）
 - `fetch_and_refine_data()`：呼叫 Statcast API，過濾 `hit_into_play`，計算噴射角 (spray angle)，映射結果標籤 (OUT, SINGLE, DOUBLE, TRIPLE, HR)，儲存 CSV。
+- **整合日誌**：詳細記錄資料抓取過程（原始筆數、篩選後筆數、各類別分布）。
+- **使用配置**：資料目錄、起始年份等參數皆從 `config.yaml` 讀取。
 
 ### Model_Trainer.py
 - 預處理：將 `bb_type` 轉為 one-hot，填補缺失值。
@@ -108,6 +124,7 @@ python ML_Physics_Hybrid_Predictor.py --model baseball_dual_model.pkl --ev_boost
     - 分類特徵：上述特徵 + `hit_distance_sc`（串接距離）
 - `train_full()`：隨機搜尋最佳超參數，訓練雙模型，儲存為 bundle（含特徵清單、標籤映射、測試集）。
 - `train_incremental()`：載入舊模型，以較低學習率接續訓練，避免災難性遺忘。
+- **完整日誌**：記錄訓練進度、最佳參數、資料切分狀況。
 
 ### Predictor_Engine.py
 - `BaseballPredictorEngine` 類別：
@@ -116,7 +133,8 @@ python ML_Physics_Hybrid_Predictor.py --model baseball_dual_model.pkl --ev_boost
         2. 將預測距離加入特徵，用分類器預測結果類別。
         3. `find_fitted_trajectory()`：二分搜尋阻力係數 $C_d$，使物理模擬落地距離 = ML 預測距離。
     - `adaptive_boost()`：作弊模式補償邏輯。
-輸出：文字分析報告 + 3D 球場軌跡圖。
+- **日誌整合**：記錄每次推論的輸入參數、預測結果、阻力係數搜尋過程。
+- **輸出**：文字分析報告 + 3D 球場軌跡圖。
 
 ### Draw_Utils.py
 - `calculate_trajectory()`：4 階 Runge-Kutta 數值積分（含空氣阻力）。
@@ -126,12 +144,24 @@ python ML_Physics_Hybrid_Predictor.py --model baseball_dual_model.pkl --ev_boost
 ### Evaluate_Model.py
 - 載入模型 bundle，對測試集進行串接預測。
 - 輸出分類報告、MAE、R2，並繪製混淆矩陣與距離散佈圖。
+- **配置整合**：模型路徑可從配置讀取，或由指令列參數指定。
+
+### ML_Physics_Hybrid_Predictor.py
+- **使用者互動介面**：提供三種操作模式（批次處理、即時輸入、隨機測試）。
+- **進度追蹤**：批次處理時使用 `ProgressLogger` 顯示即時進度。
+- **結果儲存**：自動將預測結果存為 CSV（含時間戳記）。
 
 ## 檔案說明
 
 | 檔案 | 功能 |
 |------|------|
 | `\datasets`| 存放下載後的資料夾 |
+| `\logs` | 日誌檔案存放目錄（自動建立） |
+| `\outputs` | 預測結果 CSV 檔存放目錄（自動建立） |
+| `requirement.txt` | Python 套件依賴清單（新增 pyyaml） |
+| `config.yaml` | 集中配置檔案：管理所有系統參數（資料路徑、模型參數、物理設定、日誌等級等） |
+| `Config_Loader.py` | 配置載入器：讀取 `config.yaml`，提供統一的配置存取介面 |
+| `Logger_Setup.py` | 日誌系統：提供完整的日誌記錄功能（自動輪替、雙輸出、進度追蹤） |
 | `Data_Utils.py` | 數據下載與前處理 |
 | `Draw_Utils.py` | 物理模擬與 3D 繪圖 |
 | `Model_Trainer.py` | 模型訓練（全量/增量） |
@@ -144,34 +174,38 @@ python ML_Physics_Hybrid_Predictor.py --model baseball_dual_model.pkl --ev_boost
 
 ---
 
-## 自訂與擴充
+## 配置管理與日誌系統
 
-### 新增擊球結果類別
-修改 `LABEL_MAP`（位於 Model_Trainer.py 與 Predictor_Engine.py），並調整分類器 `num_class` 參數。
+### 配置管理 (config.yaml)
+所有系統設定都集中在 `config.yaml` 中管理：
+- 資料路徑與參數
+- 模型訓練超參數
+- 物理模擬參數
+- 球場設定
+- 日誌等級與輸出
 
+### 日誌系統
+- 自動輪替日誌檔案 (預設 10MB)
+- 支援多種輸出 (控制台、檔案)
+- 提供進度追蹤器
+- 函式執行時間裝飾器
+
+### 使用範例
 ```python
-LABEL_MAP = {'OUT': 0, 'SINGLE': 1, 'DOUBLE': 2, 'TRIPLE': 3, 'HR': 4, 'NEW_TYPE': 5}
-```
+from Config_Loader import config
+from Logger_Setup import setup_logger, log_execution_time
 
-### 調整物理參數
-編輯 `Predictor_Engine.py` 中的 `Phsical_Params` 字典，可更改重力、空氣密度、球質量等。
-```python=
-Phsical_Params = {
-    'g': 9.81,        # 重力加速度 (m/s²)
-    'rho': 1.225,     # 空氣密度 (kg/m³)
-    'area': 0.00421,  # 棒球截面積 (m²)
-    'm': 0.145,       # 棒球質量 (kg)
-    'dt': 0.01,       # 模擬時間步長 (秒)
-    'hit_pos': (0, 0, 1.0)  # 擊球位置 (x, y, z) (m)
-}
-```
+logger = setup_logger(__name__)
 
-### 調整阻力係數搜尋範圍
-在 `find_fitted_trajectory()` 中可修改 `low_cd` 與 `high_cd` 的初始值，或增加迭代次數以提高精確度。
+@log_execution_time()
+def my_function():
+    data_dir = config.get('data', 'data_dir')
+    logger.info(f"資料目錄: {data_dir}")
+```
 
 ---
 
-## 阻力係數 ($C_d$) 的物理意義
+## 補充：阻力係數 ($C_d$) 的物理意義
 在混合模型中，我們反推的「有效阻力係數」具有以下物理意涵：
 
 | $C_d$ 範圍 | 物理意義|
@@ -257,9 +291,13 @@ v1.0.3 (2026-02-22)
 - 加入作弊模式 (EV Boost / Distance Boost)
 - 優化阻力係數搜尋演算法
 
-v1.0.3 (2026-02-22)
+v1.0.3 (2026-02-23)
 - 更新前一版本錯誤的繪畫邏輯
 - 增加存檔功能，將預測結果儲存
+
+v1.0.4 (2026-02-24)
+- 再次更新前一版本錯誤的繪畫邏輯（我很抱歉）
+- 新增配置管理與日誌系統
 
 v1.1.0 (規劃中)
 - 支援多球場選擇（使用者可切換球場參數）

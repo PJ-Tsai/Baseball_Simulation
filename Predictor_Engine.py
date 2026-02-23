@@ -6,23 +6,43 @@ import random
 import os
 # 從你之前的模組匯入場地繪製工具
 from Draw_Utils import draw_field, calculate_trajectory
+from Config_Loader import config
+from Logger_Setup import setup_logger, log_execution_time, ProgressLogger
 
-Phsical_Params = {
-    'g': 9.81,        # 重力加速度 (m/s^
-    'rho': 1.225,    # 空氣密度 (kg/m^3)
-    'area': 0.00421, # 棒球截面積 (m^2)
-    'm': 0.145,       # 棒球質量 (kg)
-    'dt': 0.01,        # 模擬時間步長 (秒)
-    'hit_pos': (0, 0, 1.0)  # 擊球位置 (x, y, z) (m)
+# 設定日誌
+logger = setup_logger(__name__)
+
+# 從配置讀取物理參數
+PHYSICAL_PARAMS = {
+    'g': config.get('physics', 'g'),
+    'rho': config.get('physics', 'rho'),
+    'area': config.get('physics', 'area'),
+    'm': config.get('physics', 'm'),
+    'dt': config.get('physics', 'dt'),
+    'hit_pos': tuple(config.get('physics', 'hit_pos'))
 }
 
+CD_RANGE = config.get('physics', 'cd_range')
+CD_ITERATIONS = CD_RANGE['iterations']
+CHEAT_CONFIG = config.get('cheat_mode')
+
 class BaseballPredictorEngine:
-    def __init__(self, model_path='baseball_dual_model.pkl'):
+    @log_execution_time()
+    def __init__(self, model_path=None):
         """初始化引擎，載入模型與特徵設定"""
-        print(f"--- 正在啟動預測引擎 (模型: {model_path}) ---")
+        if model_path is None:
+            model_path = config.get('model', 'name')
+        
+        logger.info(f"正在啟動預測引擎 (模型: {model_path})")
+        
         try:
             # 載入模型 Bundle
             self.data_bundle = joblib.load(model_path)
+            
+            # 檢查模型中的配置
+            if 'config' in self.data_bundle:
+                logger.debug("模型包含訓練時的配置資訊")
+            
             # 強制使用 CPU 進行推理
             self.clf = self.data_bundle['classifier'].set_params(device="cpu")
             self.reg = self.data_bundle['regressor'].set_params(device="cpu")
@@ -32,10 +52,16 @@ class BaseballPredictorEngine:
             self.clf_features = self.data_bundle['clf_features']
             
             self.label_map = self.data_bundle['label_map']
-            self.target_names = [k for k, v in sorted(self.label_map.items(), key=lambda item: item[1])]
+            self.target_names = [k for k, v in sorted(self.label_map.items(), 
+                                                       key=lambda item: item[1])]
+            
+            logger.info(f"引擎啟動成功")
+            
         except Exception as e:
-            print(f"引擎啟動失敗: {e}")
+            logger.error(f"引擎啟動失敗: {e}", exc_info=True)
             raise
+    
+    @log_execution_time()
 
     def _get_bb_type(self, angle):
         """根據仰角自動判定擊球類型"""
@@ -53,7 +79,7 @@ class BaseballPredictorEngine:
         # 二分搜尋尋找最接近預測距離的 Cd 值
         for _ in range(10):
             mid_cd = (low_cd + high_cd) / 2
-            traj = calculate_trajectory(v_kmh, angle_deg, spray_deg, Phsical_Params, Cd=mid_cd)
+            traj = calculate_trajectory(v_kmh, angle_deg, spray_deg, PHYSICAL_PARAMS, Cd=mid_cd)
             sim_dist = np.sqrt(traj['x'][-1]**2 + traj['y'][-1]**2)
             
             if sim_dist > target_dist_m:
@@ -70,11 +96,9 @@ class BaseballPredictorEngine:
         自適應補償增益
         :param value: 原始數值
         :param boost_factor: 增益係數 (1.0 為不變)
-        :param target_threshold: 門檻 (低於此值才觸發強補償)
-        :param max_range: 硬性上限
         """
-        target_threshold = 85 if boost_type == 'EV' else 300
-        max_range = 115 if boost_type == 'EV' else 250
+        target_threshold = CHEAT_CONFIG['ev_threshold'] if boost_type == 'EV' else CHEAT_CONFIG['dist_threshold']
+        max_range = CHEAT_CONFIG['ev_max'] if boost_type == 'EV' else CHEAT_CONFIG['dist_max']
 
         if boost_factor == 1.0 or value >= target_threshold:
             return value
@@ -85,13 +109,26 @@ class BaseballPredictorEngine:
         # 補償公式：基本差距 * 增益倍率 * (1 + 距離衰減修正)
         compensation = (target_threshold - value) * (boost_factor - 1) * (1 + gap_ratio)
         new_value = value + compensation
+        
+        boosted = max(value, min(new_value, max_range))
+        logger.debug(f"{boost_type} Boost: {value:.1f} -> {boosted:.1f}")
+        
+        return boosted
     
-        return max(value, min(new_value, max_range))
+    @log_execution_time()
 
-    def run_inference(self, speed_mph, angle_deg, spray_deg,Is_plot=False, ev_boost=1.0, dist_boost=1.0):
+    def run_inference(self, speed_mph, angle_deg, spray_deg, Is_plot=False, 
+                      ev_boost=1.0, dist_boost=1.0):
         """執行 AI 串接預測與物理擬合"""
-        speed_mph = self.adaptive_boost(speed_mph, ev_boost, boost_type='EV') # Cheat Mode: EV Boost
-        v_kmh = speed_mph * 1.60934 # 轉換為 km/h
+        logger.info(f"推論輸入: 速度={speed_mph:.1f}mph, 仰角={angle_deg:.1f}°, 噴射角={spray_deg:.1f}°")
+        
+        if ev_boost != 1.0:
+            logger.info(f"啟用 EV 補償: {ev_boost}x")
+        if dist_boost != 1.0:
+            logger.info(f"啟用距離補償: {dist_boost}x")
+        
+        speed_mph = self.adaptive_boost(speed_mph, ev_boost, boost_type='EV')
+        v_kmh = speed_mph * 1.60934
         bb_type = self._get_bb_type(angle_deg)
         
         # 1. 第一階段：迴歸預測飛行距離
@@ -100,23 +137,28 @@ class BaseballPredictorEngine:
             'launch_angle': angle_deg,
             'spray_angle': spray_deg
         }])
+        
         # 自動補齊 One-hot 欄位
         for feat in self.reg_features:
             if feat.startswith('type_'):
                 reg_df[feat] = 1 if f"type_{bb_type}" == feat else 0
         
         pred_dist_ft = float(self.reg.predict(reg_df[self.reg_features])[0])
-        pred_dist_ft = self.adaptive_boost(pred_dist_ft, dist_boost, boost_type='DIST') # Cheat Mode: Distance Boost
+        logger.debug(f"迴歸預測距離: {pred_dist_ft:.1f}ft")
+        
+        pred_dist_ft = self.adaptive_boost(pred_dist_ft, dist_boost, boost_type='DIST')
 
-        # 2. 第二階段：分類預測結果 (串接距離特徵)
+        # 2. 第二階段：分類預測結果
         clf_df = reg_df.copy()
         clf_df['hit_distance_sc'] = pred_dist_ft
-        # 補齊分類器可能需要的額外 One-hot
         for feat in self.clf_features:
-            if feat not in clf_df.columns: clf_df[feat] = 0
+            if feat not in clf_df.columns: 
+                clf_df[feat] = 0
             
         y_probs = self.clf.predict_proba(clf_df[self.clf_features])[0]
         pred_label = self.target_names[np.argmax(y_probs)]
+        
+        logger.info(f"分類結果: {pred_label} (機率: {y_probs[np.argmax(y_probs)]:.3f})")
         
         # 3. 物理軌跡擬合
         fitted_traj = self.find_fitted_trajectory(v_kmh, angle_deg, spray_deg, pred_dist_ft)
@@ -130,7 +172,6 @@ class BaseballPredictorEngine:
             'result_class': pred_label,
             'hit_prob': 1 - y_probs[0],
             'cd': fitted_traj['cd'],
-            # 'trajectory': fitted_traj # 包含完整點位
         }
 
         # 4. 展示結果
@@ -142,7 +183,7 @@ class BaseballPredictorEngine:
                 'trajectory': fitted_traj,
                 'cd': fitted_traj['cd'],
                 'bb_type': bb_type,
-                'is_foul': not (-45 <= angle_deg <= 45)
+                'is_foul': not (-45 <= spray_deg <= 45)
             })
         
         return result # 回傳結果

@@ -1,0 +1,81 @@
+# config.yaml
+# MLB 擊球分析混合模型配置檔案
+
+# 資料設定
+data:
+  data_dir: "datasets"
+  start_year: 2015
+  cache_enabled: true
+  
+# 模型設定
+model:
+  # 基本參數
+  name: "baseball_dual_model.pkl"
+  random_state: 42
+  test_size: 0.3
+  val_size: 0.5  # 從測試集中再切一半給驗證集
+  
+  # 訓練參數
+  training:
+    device: "cuda"  # 可選: cuda, cpu
+    tree_method: "hist"
+    early_stopping_rounds: 15
+    
+  # 超參數搜尋空間
+  param_dist:
+    n_estimators: [500, 800]
+    learning_rate: [0.01, 0.05, 0.1]
+    max_depth: [8, 10, 12]
+    subsample: [0.8]
+    gamma: [0.1, 0.5]
+    
+  # 增量訓練參數
+  incremental:
+    learning_rate: 0.01
+    n_estimators: 100
+    
+# 物理模擬參數
+physics:
+  g: 9.81  # 重力加速度 (m/s²)
+  rho: 1.225  # 空氣密度 (kg/m³)
+  area: 0.00421  # 棒球截面積 (m²)
+  m: 0.145  # 棒球質量 (kg)
+  dt: 0.01  # 模擬時間步長 (秒)
+  hit_pos: [0, 0, 1.0]  # 擊球位置 (x, y, z) (m)
+  
+  # 阻力係數搜尋範圍
+  cd_range:
+    min: 0.1
+    max: 1.0
+    iterations: 10
+    
+# 球場設定
+park:
+  default: "generic"
+  foul_line_ft: 328  # 邊線距離 (ft)
+  center_field_ft: 400  # 中外野距離 (ft)
+  wall_height_m: 3.0  # 全壘打牆高度 (m)
+  base_dist_ft: 90  # 壘間距離 (ft)
+  
+# 標籤映射
+labels:
+  OUT: 0
+  SINGLE: 1
+  DOUBLE: 2
+  TRIPLE: 3
+  HR: 4
+  
+# 作弊模式設定
+cheat_mode:
+  ev_threshold: 85  # mph
+  dist_threshold: 300  # ft
+  ev_max: 115  # mph
+  dist_max: 500  # ft
+  
+# 日誌設定
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "logs/baseball_predictor.log"
+  max_bytes: 10485760  # 10MB
+  backup_count: 5
