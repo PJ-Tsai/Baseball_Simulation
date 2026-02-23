@@ -88,7 +88,7 @@ class BaseballPredictorEngine:
     
         return max(value, min(new_value, max_range))
 
-    def run_inference(self, speed_mph, angle_deg, spray_deg, ev_boost=1.0, dist_boost=1.0):
+    def run_inference(self, speed_mph, angle_deg, spray_deg,Is_plot=False, ev_boost=1.0, dist_boost=1.0):
         """執行 AI 串接預測與物理擬合"""
         speed_mph = self.adaptive_boost(speed_mph, ev_boost, boost_type='EV') # Cheat Mode: EV Boost
         v_kmh = speed_mph * 1.60934 # 轉換為 km/h
@@ -120,17 +120,32 @@ class BaseballPredictorEngine:
         
         # 3. 物理軌跡擬合
         fitted_traj = self.find_fitted_trajectory(v_kmh, angle_deg, spray_deg, pred_dist_ft)
-        
-        # 4. 展示結果
-        self.visualize_result(speed_mph, angle_deg, spray_deg, {
-            'class': pred_label,
+
+        result = {
+            'input_speed': speed_mph,
+            'input_angle': angle_deg,
+            'input_spray': spray_deg,
+            'boosted_speed': speed_mph,
+            'pred_dist_ft': pred_dist_ft,
+            'result_class': pred_label,
             'hit_prob': 1 - y_probs[0],
-            'dist_ft': pred_dist_ft,
-            'trajectory': fitted_traj,
             'cd': fitted_traj['cd'],
-            'bb_type': bb_type,
-            'is_foul': abs(spray_deg) > 45
-        })
+            # 'trajectory': fitted_traj # 包含完整點位
+        }
+
+        # 4. 展示結果
+        if Is_plot:
+            self.visualize_result(speed_mph, angle_deg, spray_deg, {
+                'class': pred_label,
+                'hit_prob': 1 - y_probs[0],
+                'dist_ft': pred_dist_ft,
+                'trajectory': fitted_traj,
+                'cd': fitted_traj['cd'],
+                'bb_type': bb_type,
+                'is_foul': not (-45 <= angle_deg <= 45)
+            })
+        
+        return result # 回傳結果
 
     def visualize_result(self, speed_mph, angle_deg, spray_deg, result):
         """視覺化繪圖"""

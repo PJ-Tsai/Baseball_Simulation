@@ -98,7 +98,7 @@ python ML_Physics_Hybrid_Predictor.py --model baseball_dual_model.pkl --ev_boost
 
 ## 模組詳細說明
 ### Data_Utils.py
-- `date_check()`：確保月份在 3~11 月，且不超過當前日期。（MLB季賽在 3~11 月間）
+- `date_check()`：確保月份在 3\~11 月，且不超過當前日期。（MLB季賽在 3\~11 月間）
 - `fetch_and_refine_data()`：呼叫 Statcast API，過濾 `hit_into_play`，計算噴射角 (spray angle)，映射結果標籤 (OUT, SINGLE, DOUBLE, TRIPLE, HR)，儲存 CSV。
 
 ### Model_Trainer.py
@@ -256,6 +256,10 @@ v1.0.3 (2026-02-22)
 - 更新模型結構（回歸模型與分類器分開訓練改為串接）
 - 加入作弊模式 (EV Boost / Distance Boost)
 - 優化阻力係數搜尋演算法
+
+v1.0.3 (2026-02-22)
+- 更新前一版本錯誤的繪畫邏輯
+- 增加存檔功能，將預測結果儲存
 
 v1.1.0 (規劃中)
 - 支援多球場選擇（使用者可切換球場參數）

@@ -9,7 +9,7 @@ DEFAULT_START_DATE="2025-03-01"
 DEFAULT_END_DATE="2025-03-31"
 # Parameter for Cheat Mode
 EV_BOOST=1.0
-DIST_BOOST=1.2
+DIST_BOOST=1.0
 
 echo "------------------------------------------"
 echo "   MLB 擊球模型管理流水線"

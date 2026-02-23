@@ -14,6 +14,9 @@ Phsical_Params = {
 """
 def calculate_trajectory(v_kmh, angle_deg, direction_deg, physical_params, Cd=0.30):
     # --- 物理常數 ---
+    # Draw_Field 預設球場邊界為 0 ~ 90 度, 但實際上 Spray Angle 是以 0 度為中心，向左負、向右正，因此需要調整方向角
+    # 例如：Spray Angle -30 度實際上是向左偏 30 度，應該對應到 Draw_Field 的 15 度 (45 - 30)，而 Spray Angle +30 度則對應到 Draw_Field 的 75 度 (45 + 30)
+    direction_deg = direction_deg + 45
     g = physical_params['g']
     rho = physical_params['rho']
     area = physical_params['area']
