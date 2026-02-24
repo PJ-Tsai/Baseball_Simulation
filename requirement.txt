@@ -8,3 +8,4 @@ seaborn>=0.13.0
 pybaseball>=2.2.7
 requests>=2.31.0
 python-dateutil>=2.9.0
+ffmpeg-python>=0.2.0

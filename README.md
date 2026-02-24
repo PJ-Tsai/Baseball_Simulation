@@ -24,17 +24,20 @@ graph TD
     A[Data_Utils<br/>抓取/清洗] --> B[Model_Trainer<br/>訓練/增量]
     B --> C[Predictor Engine<br/>核心推論引擎]
     C --> D[Draw_Utils<br/>物理模擬/繪圖]
+    C --> E[Visualization_3D<br/>動畫/影片錄製]
     
     style A fill:#f9f,stroke:#333,stroke-width:2px
     style B fill:#bbf,stroke:#333,stroke-width:2px
     style C fill:#bfb,stroke:#333,stroke-width:2px
     style D fill:#fbb,stroke:#333,stroke-width:2px
+    style E fill:#ff9,stroke:#333,stroke-width:2px
 ```
 
 - **Data_Utils.py**：Statcast 數據獲取、清洗、特徵工程。
 - **Model_Trainer.py**：全量訓練／增量訓練 XGBoost 雙模型。
 - **Predictor_Engine.py**：核心推論引擎（混合 ML + 物理）。
 - **Draw_Utils.py**：3D 球場繪製、物理軌跡計算、全壘打判定。
+- **Visualization_3D.py**：進階 3D 視覺化模組，提供軌跡動畫與影片錄製功能。
 - **Evaluate_Model.py**：載入已訓練模型，輸出分類報告與混淆矩陣。
 - **Shell 腳本**：`Get_Data.sh` 簡化數據下載，`Model_Pipeline.sh` 整合訓練流程。
 
@@ -151,6 +154,20 @@ python ML_Physics_Hybrid_Predictor.py --model baseball_dual_model.pkl --ev_boost
 - **進度追蹤**：批次處理時使用 `ProgressLogger` 顯示即時進度。
 - **結果儲存**：自動將預測結果存為 CSV（含時間戳記）。
 
+### Visualization_3D.py
+- `Baseball3DVisualizer` 類別：
+    - add_trajectory()：加入多條軌跡進行比較（不同顏色、標籤）。
+    - create_static_3d_plot()：繪製靜態多軌跡圖，標示起點（圓點）與終點（叉號）。
+    - setup_3d_plot()：統一設定 3D 圖表樣式（座標範圍、標籤、視角）。
+
+- `TrajectoryVideoRecorder` 類別：
+    - `record_single_trajectory()`：將單一軌跡錄製為 MP4 影片，支援自動旋轉視角功能，方便全方位觀察。
+    - `show_trajectory_animation()``：即時顯示軌跡動畫（可手動拖曳視角），適合互動式探索。
+    - 影片參數可調：FPS、DPI、旋轉與否、編碼器等皆可透過 config.yaml 設定。
+    - 自動輸出目錄：影片預設儲存至 videos/ 目錄，檔名自動包含時間戳記。
+
+- 配置整合：球場尺寸、影片設定皆從 config.yaml 讀取，確保一致性。
+
 ## 檔案說明
 
 | 檔案 | 功能 |
@@ -158,12 +175,14 @@ python ML_Physics_Hybrid_Predictor.py --model baseball_dual_model.pkl --ev_boost
 | `\datasets`| 存放下載後的資料夾 |
 | `\logs` | 日誌檔案存放目錄（自動建立） |
 | `\outputs` | 預測結果 CSV 檔存放目錄（自動建立） |
-| `requirement.txt` | Python 套件依賴清單（新增 pyyaml） |
+| `\videos` | 影片輸出目錄（自動建立） |
+| `requirement.txt` | Python 套件依賴清單 |
 | `config.yaml` | 集中配置檔案：管理所有系統參數（資料路徑、模型參數、物理設定、日誌等級等） |
 | `Config_Loader.py` | 配置載入器：讀取 `config.yaml`，提供統一的配置存取介面 |
 | `Logger_Setup.py` | 日誌系統：提供完整的日誌記錄功能（自動輪替、雙輸出、進度追蹤） |
 | `Data_Utils.py` | 數據下載與前處理 |
 | `Draw_Utils.py` | 物理模擬與 3D 繪圖 |
+| `Visualization_3D.py` | 3D 動畫視覺化（靜態比較、動態影片） |
 | `Model_Trainer.py` | 模型訓練（全量/增量） |
 | `Predictor_Engine.py` | 混合推論引擎 |
 | `ML_Physics_Hybrid_Predictor.py` | 使用者互動介面（呼叫引擎） |
@@ -182,6 +201,7 @@ python ML_Physics_Hybrid_Predictor.py --model baseball_dual_model.pkl --ev_boost
 - 模型訓練超參數
 - 物理模擬參數
 - 球場設定
+- 影片錄製參數（FPS、解析度、旋轉與否等）
 - 日誌等級與輸出
 
 ### 日誌系統
@@ -291,15 +311,21 @@ v1.0.3 (2026-02-22)
 - 加入作弊模式 (EV Boost / Distance Boost)
 - 優化阻力係數搜尋演算法
 
-v1.0.3 (2026-02-23)
+v1.0.4 (2026-02-23)
 - 更新前一版本錯誤的繪畫邏輯
 - 增加存檔功能，將預測結果儲存
 
-v1.0.4 (2026-02-24)
+v1.1.0 (2026-02-24)
 - 再次更新前一版本錯誤的繪畫邏輯（我很抱歉）
 - 新增配置管理與日誌系統
 
-v1.1.0 (規劃中)
+v1.2.0 (2026-02-24)
+- 支援軌跡動畫影片錄製（自動旋轉視角）
+- 支援多軌跡靜態比較
+- 影片參數可透過設定檔調整
+- 已知問題（待修正）：軌跡影片阻塞進程
+
+v2.1.0 (規劃中)
 - 支援多球場選擇（使用者可切換球場參數）
 - Web 介面版本 (Flask + React) 或其他方式包裝
 

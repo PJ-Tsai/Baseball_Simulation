@@ -79,3 +79,14 @@ logging:
   file: "logs/baseball_predictor.log"
   max_bytes: 10485760  # 10MB
   backup_count: 5
+
+# 影片設定
+video:
+  output_dir: "videos"
+  fps: 30
+  dpi: 200
+  default_interval: 50  # 毫秒
+  rotation: true  # 是否預設旋轉視角
+  codec: "h264"
+  bitrate: 1800
+  show_animation: true  # 是否在預測過程中顯示動畫（會影響性能）

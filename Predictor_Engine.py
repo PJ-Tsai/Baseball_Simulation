@@ -4,10 +4,12 @@ import numpy as np
 import matplotlib.pyplot as plt
 import random
 import os
-# 從你之前的模組匯入場地繪製工具
+import datetime
 from Draw_Utils import draw_field, calculate_trajectory
 from Config_Loader import config
 from Logger_Setup import setup_logger, log_execution_time, ProgressLogger
+from Visualization_3D import Baseball3DVisualizer, TrajectoryVideoRecorder
+
 
 # 設定日誌
 logger = setup_logger(__name__)
@@ -60,6 +62,13 @@ class BaseballPredictorEngine:
         except Exception as e:
             logger.error(f"引擎啟動失敗: {e}", exc_info=True)
             raise
+
+        # 初始化影片錄製器
+        self.video_recorder = TrajectoryVideoRecorder(
+            output_dir=config.get('video', 'output_dir', default='videos')
+        )
+        self.visualizer = Baseball3DVisualizer()
+        self.cheat_config = CHEAT_CONFIG
     
     @log_execution_time()
 
@@ -117,8 +126,8 @@ class BaseballPredictorEngine:
     
     @log_execution_time()
 
-    def run_inference(self, speed_mph, angle_deg, spray_deg, Is_plot=False, 
-                      ev_boost=1.0, dist_boost=1.0):
+    def run_inference(self, speed_mph, angle_deg, spray_deg, Is_plot=False, Video_save=False,
+                  ev_boost=1.0, dist_boost=1.0):
         """執行 AI 串接預測與物理擬合"""
         logger.info(f"推論輸入: 速度={speed_mph:.1f}mph, 仰角={angle_deg:.1f}°, 噴射角={spray_deg:.1f}°")
         
@@ -172,6 +181,7 @@ class BaseballPredictorEngine:
             'result_class': pred_label,
             'hit_prob': 1 - y_probs[0],
             'cd': fitted_traj['cd'],
+            'trajectory': fitted_traj  # 紀錄軌跡提供影片繪畫使用
         }
 
         # 4. 展示結果
@@ -186,7 +196,27 @@ class BaseballPredictorEngine:
                 'is_foul': not (-45 <= spray_deg <= 45)
             })
         
-        return result # 回傳結果
+        # 5. 儲存影片（如果需要）- 自動旋轉視角
+        if Video_save:
+            video_path = self._save_trajectory_video_from_result(
+                result, 
+                speed_mph, 
+                angle_deg, 
+                spray_deg
+            )
+            if video_path:
+                logger.info(f"軌跡影片已儲存至: {video_path}")
+                result['video_path'] = video_path
+        
+        # 6. 顯示互動式動畫（如果需要）- 可手動控制視角
+        if self.video_recorder.show_animation:
+            print("\n顯示互動式動畫（可用滑鼠拖曳旋轉視角）...")
+            self.video_recorder.show_trajectory_animation(
+                fitted_traj,
+                title=f"{pred_label}: {speed_mph:.0f}mph, {angle_deg:.0f}°"
+            )
+
+        return result
 
     def visualize_result(self, speed_mph, angle_deg, spray_deg, result):
         """視覺化繪圖"""
@@ -205,7 +235,7 @@ class BaseballPredictorEngine:
             f"  - Spray Angle:    {spray_deg:.1f}°\n"
             f"  - BB Type:        {result['bb_type']}\n\n"
             f"  [ ML PREDICTIONS ]\n"
-            f"  - Predicted Result: {result['class']}\n"
+            f"  - Predicted Result: {'FOUL' if result['is_foul'] else result['class']}\n"
             f"  - Hit Probability:  {result['hit_prob']:.1%}\n"
             f"  - Pred Distance:    {result['dist_ft']:.1f} ft\n\n"
             f"  [ PHYSICS ESTIMATION ]\n"
@@ -240,6 +270,76 @@ class BaseballPredictorEngine:
         plt.tight_layout()
         plt.show()
 
+    def _save_trajectory_video_from_result(self, result, speed_mph, angle_deg, spray_deg):
+        """
+        從已有的 result 物件儲存影片
+        
+        Args:
+            result: run_inference 回傳的結果字典
+            speed_mph: 初速 (mph)
+            angle_deg: 仰角
+            spray_deg: 噴射角
+        
+        Returns:
+            str: 影片儲存路徑，失敗則回傳 None
+        """
+        try:
+            if 'trajectory' not in result:
+                logger.error("結果中沒有軌跡資料")
+                return None
+            
+            # 自動產生檔名
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            result_type = result['result_class']
+            filename = f"{timestamp}_{result_type}_{speed_mph:.0f}mph.mp4"
+            
+            # 產生影片（使用配置中的設定）
+            video_path = self.video_recorder.record_single_trajectory(
+                result['trajectory'],
+                filename=filename,
+                title=f"{result['result_class']}: {speed_mph:.0f}mph, {angle_deg:.0f}°"
+            )
+            
+            return video_path
+            
+        except Exception as e:
+            logger.error(f"儲存影片時發生錯誤: {e}", exc_info=True)
+            return None
+
+    # 保留 save_trajectory_video 方法（用於外部直接呼叫）
+    def save_trajectory_video(self, speed_mph, angle_deg, spray_deg, 
+                            filename=None, rotation=True):
+        """
+        儲存單一軌跡的影片（外部呼叫用）
+        
+        Returns:
+            str: 影片儲存路徑，失敗則回傳 None
+        """
+        logger.info(f"產生軌跡影片: {speed_mph}mph, {angle_deg}°, {spray_deg}°")
+        
+        # 執行推論取得軌跡
+        result = self.run_inference(speed_mph, angle_deg, spray_deg, Is_plot=False)
+        
+        if 'trajectory' not in result:
+            logger.error("無法取得軌跡資料")
+            return None
+        
+        # 自動產生檔名（如果沒指定）
+        if filename is None:
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            result_type = 'FOUL' if not (-45 <= spray_deg <= 45) else result['result_class']
+            filename = f"{timestamp}_{result_type}_{speed_mph:.0f}mph.mp4"
+        
+        # 產生影片
+        video_path = self.video_recorder.record_single_trajectory(
+            result['trajectory'],
+            filename=filename,
+            title=f"{result['result_class']}: {speed_mph}mph, {angle_deg}°",
+            rotation=rotation
+        )
+        
+        return video_path
+    
 if __name__ == "__main__":
     # 測試腳本
     engine = BaseballPredictorEngine('baseball_dual_model.pkl')
