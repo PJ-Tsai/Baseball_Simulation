@@ -51,11 +51,61 @@ physics:
     
 # 球場設定
 park:
-  default: "generic"
-  foul_line_ft: 328  # 邊線距離 (ft)
-  center_field_ft: 400  # 中外野距離 (ft)
-  wall_height_m: 3.0  # 全壘打牆高度 (m)
-  base_dist_ft: 90  # 壘間距離 (ft)
+  default: "generic"  # 預設使用通用球場
+  default_id: 2392  # 預設球場ID為0時使用通用球場
+  
+  # 通用球場設定
+  generic:
+    foul_line_ft: 328  # 邊線距離 (ft)
+    center_field_ft: 400  # 中外野距離 (ft)
+    wall_height_m: 3  # 全壘打牆高度 (m)
+    base_dist_ft: 90  # 壘間距離 (ft)
+  
+  # 特定球場設定檔案
+  specific_park_data: "park_data/ballpark_data.json"
+  
+  # 球場ID映射表
+  park_id_mapping:
+    0: "generic"
+    1: "Angel Stadium"
+    2: "Oriole Park at Camden Yards"
+    3: "Fenway Park"
+    4: "Rate Field"
+    5: "Progressive Field"
+    7: "Kauffman Stadium"
+    10: "Oakland Coliseum"
+    12: "Tropicana Field"
+    13: "Globe Life Park in Arlington"
+    14: "Rogers Centre"
+    15: "Chase Field"
+    16: "Turner Field"
+    17: "Wrigley Field"
+    19: "Coors Field"
+    22: "Dodger Stadium"
+    31: "PNC Park"
+    32: "American Family Field"
+    680: "T-Mobile Park"
+    2392: "Daikin Park"
+    2394: "Comerica Park"
+    2395: "Oracle Park"
+    2523: "George M. Steinbrenner Field"
+    2529: "Sutter Health Park"
+    2536: "TD Ballpark"
+    2602: "Great American Ball Park"
+    2680: "Petco Park"
+    2681: "Citizens Bank Park"
+    2756: "Sahlen Field"
+    2889: "Busch Stadium"
+    3289: "Citi Field"
+    3309: "Nationals Park"
+    3312: "Target Field"
+    3313: "Yankee Stadium"
+    3949: "Rickwood Field"
+    4169: "loanDepot park"
+    4705: "Truist Park"
+    5325: "Globe Life Field"
+    5445: "Field of Dreams"
+    6130: "Speedway"
   
 # 標籤映射
 labels:

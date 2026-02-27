@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import random
 import os
 import datetime
-from Draw_Utils import draw_field, calculate_trajectory
+from Draw_Utils import draw_field, calculate_trajectory, get_park_config, get_park_name_by_id
 from Config_Loader import config
 from Logger_Setup import setup_logger, log_execution_time, ProgressLogger
 from Visualization_3D import Baseball3DVisualizer, TrajectoryVideoRecorder
@@ -31,11 +31,17 @@ CHEAT_CONFIG = config.get('cheat_mode')
 class BaseballPredictorEngine:
     @log_execution_time()
     def __init__(self, model_path=None):
-        """初始化引擎，載入模型與特徵設定"""
+        """初始化引擎，載入模型與特徵設定
+        
+        Args:
+            model_path: 模型檔案路徑
+            park_id: 預設球場ID (0=通用球場)
+        """
         if model_path is None:
             model_path = config.get('model', 'name')
         
-        logger.info(f"正在啟動預測引擎 (模型: {model_path})")
+        self.park_id = config.get('park', 'default_id', default=0)
+        logger.info(f"正在啟動預測引擎 (模型: {model_path}, 球場ID: {self.park_id})")
         
         try:
             # 載入模型 Bundle
@@ -71,7 +77,16 @@ class BaseballPredictorEngine:
         self.cheat_config = CHEAT_CONFIG
     
     @log_execution_time()
-
+    def set_park(self, park_id):
+        """設定球場ID
+        
+        Args:
+            park_id: 球場ID (0=通用球場)
+        """
+        self.park_id = park_id
+        park_name = get_park_name_by_id(park_id)
+        logger.info(f"球場已切換為: ID={park_id}, 名稱={park_name}")
+    
     def _get_bb_type(self, angle):
         """根據仰角自動判定擊球類型"""
         if angle < 10: return 'ground_ball'
@@ -88,7 +103,8 @@ class BaseballPredictorEngine:
         # 二分搜尋尋找最接近預測距離的 Cd 值
         for _ in range(10):
             mid_cd = (low_cd + high_cd) / 2
-            traj = calculate_trajectory(v_kmh, angle_deg, spray_deg, PHYSICAL_PARAMS, Cd=mid_cd)
+            traj = calculate_trajectory(v_kmh, angle_deg, spray_deg, PHYSICAL_PARAMS, 
+                                        Cd=mid_cd, park_id=self.park_id)
             sim_dist = np.sqrt(traj['x'][-1]**2 + traj['y'][-1]**2)
             
             if sim_dist > target_dist_m:
@@ -125,7 +141,6 @@ class BaseballPredictorEngine:
         return boosted
     
     @log_execution_time()
-
     def run_inference(self, speed_mph, angle_deg, spray_deg, Is_plot=False, Video_save=False,
                   ev_boost=1.0, dist_boost=1.0):
         """執行 AI 串接預測與物理擬合"""
@@ -178,23 +193,18 @@ class BaseballPredictorEngine:
             'input_spray': spray_deg,
             'boosted_speed': speed_mph,
             'pred_dist_ft': pred_dist_ft,
-            'result_class': pred_label,
+            'result_class': "Foul" if not (-45 <= spray_deg <= 45) else pred_label,
             'hit_prob': 1 - y_probs[0],
             'cd': fitted_traj['cd'],
-            'trajectory': fitted_traj  # 紀錄軌跡提供影片繪畫使用
+            'trajectory': fitted_traj,  # 紀錄軌跡提供影片繪畫使用
+            'park_id': self.park_id,
+            'bb_type': bb_type,
+            'is_foul': not (-45 <= spray_deg <= 45)
         }
 
         # 4. 展示結果
         if Is_plot:
-            self.visualize_result(speed_mph, angle_deg, spray_deg, {
-                'class': pred_label,
-                'hit_prob': 1 - y_probs[0],
-                'dist_ft': pred_dist_ft,
-                'trajectory': fitted_traj,
-                'cd': fitted_traj['cd'],
-                'bb_type': bb_type,
-                'is_foul': not (-45 <= spray_deg <= 45)
-            })
+            self.visualize_result(speed_mph, angle_deg, spray_deg, result)
         
         # 5. 儲存影片（如果需要）- 自動旋轉視角
         if Video_save:
@@ -213,59 +223,103 @@ class BaseballPredictorEngine:
             print("\n顯示互動式動畫（可用滑鼠拖曳旋轉視角）...")
             self.video_recorder.show_trajectory_animation(
                 fitted_traj,
-                title=f"{pred_label}: {speed_mph:.0f}mph, {angle_deg:.0f}°"
+                title=f"{result['result_class']}: {speed_mph:.0f}mph, {angle_deg:.0f}°"
             )
 
         return result
 
     def visualize_result(self, speed_mph, angle_deg, spray_deg, result):
-        """視覺化繪圖"""
-        fig = plt.figure(figsize=(12, 7))
-
+        """視覺化繪圖 - 支援特定球場"""
+        # 獲取球場名稱
+        park_id = result['park_id']
+        park_name = get_park_name_by_id(park_id)
+        park_config = get_park_config(park_id)
+        
+        fig = plt.figure(figsize=(14, 8))
+        
         # --- 左側：數據分析面板 ---
         ax_text = fig.add_subplot(121)
         ax_text.axis('off')
 
+        # 球場資訊
+        park_info = f"Stadium: {park_config['name']} (ID: {park_id})"
+        if park_id == 0:
+            park_info = "Stadium: Generic Park"
+
         analysis_text = (
             f"MLB HIT ANALYSIS REPORT\n"
-            f"{'='*35}\n"
+            f"{'='*45}\n"
+            f"  [ BALLPARK INFORMATION ]\n"
+            f"  {park_info}\n\n"
             f"  [ INPUT PARAMETERS ]\n"
             f"  - Launch Speed:   {speed_mph:.1f} mph\n"
             f"  - Launch Angle:   {angle_deg:.1f}°\n"
             f"  - Spray Angle:    {spray_deg:.1f}°\n"
             f"  - BB Type:        {result['bb_type']}\n\n"
             f"  [ ML PREDICTIONS ]\n"
-            f"  - Predicted Result: {'FOUL' if result['is_foul'] else result['class']}\n"
+            f"  - Predicted Result: {'FOUL' if result['is_foul'] else result['result_class']}\n"
             f"  - Hit Probability:  {result['hit_prob']:.1%}\n"
-            f"  - Pred Distance:    {result['dist_ft']:.1f} ft\n\n"
+            f"  - Pred Distance:    {result['pred_dist_ft']:.1f} ft ({result['pred_dist_ft']*0.3048:.1f} m)\n\n"
             f"  [ PHYSICS ESTIMATION ]\n"
             f"  - Hang Time:      {result['trajectory']['hang_time']:.2f} s\n"
             f"  - Effective Cd:   {result['cd']:.3f}\n"
-            f"{'='*35}\n"
+            f"{'='*45}\n"
             f"  Status: {'!!! FOUL BALL !!!' if result['is_foul'] else 'IN PLAY'}"
         )
 
         ax_text.text(0.1, 0.5, analysis_text, transform=ax_text.transAxes, 
-                    fontsize=12, verticalalignment='center', family='monospace',
+                    fontsize=11, verticalalignment='center', family='monospace',
                     bbox=dict(facecolor='aliceblue', alpha=0.8, edgecolor='navy', boxstyle='round'))
 
         # --- 右側：3D 場地與軌跡 ---
         ax_3d = fig.add_subplot(122, projection='3d')
-        draw_field(ax_3d) # 呼叫 Draw_Utils 中的場地繪製
+        
+        # 使用新的 draw_field 函數，傳入 park_id
+        draw_field(ax_3d, park_id)
         
         traj_data = result['trajectory']
-        traj_color = 'red' if result['class'] == 'HR' else 'blue'
-        if result['is_foul']: traj_color = 'gray'
+        
+        # 根據結果設定軌跡顏色
+        if result['is_foul']:
+            traj_color = 'gray'
+        elif result['result_class'] == 'HR':
+            traj_color = 'red'
+        elif result['result_class'] in ['DOUBLE', 'TRIPLE']:
+            traj_color = 'orange'
+        else:
+            traj_color = 'blue'
 
+        # 繪製軌跡
         ax_3d.plot(traj_data['x'], traj_data['y'], traj_data['z'], 
                    color=traj_color, lw=3, label='ML-Hybrid Path')
+        
+        # 標記落點
+        if len(traj_data['x']) > 0:
+            ax_3d.scatter(traj_data['x'][-1], traj_data['y'][-1], 0, 
+                         color=traj_color, s=100, marker='o', label='Landing Point')
 
-        # 設定視角與範圍
-        ax_3d.set_zlim(0, 50)
-        ax_3d.set_xlim(-20, 140)
-        ax_3d.set_ylim(-20, 140)
+        # 動態調整顯示範圍
+        if park_config['type'] == 'generic':
+            max_field_dist = park_config['center_field_m'] * 1.2
+        else:
+            max_field_dist = np.max(park_config['distances']) * 1.2
+        
+        max_ball_dist = np.sqrt(np.max(traj_data['x'])**2 + np.max(traj_data['y'])**2)
+        max_dist = max(max_field_dist, max_ball_dist * 1.2)
+        
+        ax_3d.set_xlim(-max_dist*0.2, max_dist)
+        ax_3d.set_ylim(-max_dist*0.2, max_dist)
+        ax_3d.set_zlim(0, max(np.max(traj_data['z']), 30) * 1.2)
+        
+        # 設定視角
         ax_3d.view_init(elev=20, azim=-45)
-        ax_3d.set_title("3D Trajectory Simulation")
+        
+        park_display = park_config['name']
+        ax_3d.set_title(f"3D Trajectory Simulation - {park_display}")
+        ax_3d.set_xlabel("X: 1st Base Line (m)")
+        ax_3d.set_ylabel("Y: 3rd Base Line (m)")
+        ax_3d.set_zlabel("Height (m)")
+        ax_3d.legend()
         
         plt.tight_layout()
         plt.show()
@@ -291,13 +345,14 @@ class BaseballPredictorEngine:
             # 自動產生檔名
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             result_type = result['result_class']
-            filename = f"{timestamp}_{result_type}_{speed_mph:.0f}mph.mp4"
+            park_name = get_park_name_by_id(result.get('park_id', 0))
+            filename = f"{timestamp}_{park_name}_{result_type}_{speed_mph:.0f}mph.mp4"
             
             # 產生影片（使用配置中的設定）
             video_path = self.video_recorder.record_single_trajectory(
                 result['trajectory'],
                 filename=filename,
-                title=f"{result['result_class']}: {speed_mph:.0f}mph, {angle_deg:.0f}°"
+                title=f"{park_name}: {result['result_class']}, {speed_mph:.0f}mph, {angle_deg:.0f}°"
             )
             
             return video_path
@@ -328,13 +383,14 @@ class BaseballPredictorEngine:
         if filename is None:
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             result_type = 'FOUL' if not (-45 <= spray_deg <= 45) else result['result_class']
-            filename = f"{timestamp}_{result_type}_{speed_mph:.0f}mph.mp4"
+            park_name = get_park_name_by_id(result.get('park_id', 0))
+            filename = f"{timestamp}_{park_name}_{result_type}_{speed_mph:.0f}mph.mp4"
         
         # 產生影片
         video_path = self.video_recorder.record_single_trajectory(
             result['trajectory'],
             filename=filename,
-            title=f"{result['result_class']}: {speed_mph}mph, {angle_deg}°",
+            title=f"{park_name}: {result['result_class']}, {speed_mph}mph, {angle_deg}°",
             rotation=rotation
         )
         

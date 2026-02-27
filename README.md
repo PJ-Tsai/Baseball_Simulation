@@ -142,7 +142,7 @@ python ML_Physics_Hybrid_Predictor.py --model baseball_dual_model.pkl --ev_boost
 ### Draw_Utils.py
 - `calculate_trajectory()`：4 階 Runge-Kutta 數值積分（含空氣阻力）。
 - `draw_field()`：繪製內野鑽石、外野全壘打牆（依角度變動距離）。
-- `judge_result()`：根據軌跡與牆高判定是否為全壘打。（目前未使用，舊版留下的函式）
+- 支援預設球場繪製及特定大聯盟球場繪製（設定檔： `ballpark_data/ballpark_data.json` ）
 
 ### Evaluate_Model.py
 - 載入模型 bundle，對測試集進行串接預測。
@@ -162,7 +162,7 @@ python ML_Physics_Hybrid_Predictor.py --model baseball_dual_model.pkl --ev_boost
 
 - `TrajectoryVideoRecorder` 類別：
     - `record_single_trajectory()`：將單一軌跡錄製為 MP4 影片，支援自動旋轉視角功能，方便全方位觀察。
-    - `show_trajectory_animation()``：即時顯示軌跡動畫（可手動拖曳視角），適合互動式探索。
+    - `show_trajectory_animation()`：即時顯示軌跡動畫（可手動拖曳視角），適合互動式探索。
     - 影片參數可調：FPS、DPI、旋轉與否、編碼器等皆可透過 config.yaml 設定。
     - 自動輸出目錄：影片預設儲存至 videos/ 目錄，檔名自動包含時間戳記。
 
@@ -173,6 +173,7 @@ python ML_Physics_Hybrid_Predictor.py --model baseball_dual_model.pkl --ev_boost
 | 檔案 | 功能 |
 |------|------|
 | `\datasets`| 存放下載後的資料夾 |
+| `\ballpark_data` | 存放大聯盟球場測繪數據 |
 | `\logs` | 日誌檔案存放目錄（自動建立） |
 | `\outputs` | 預測結果 CSV 檔存放目錄（自動建立） |
 | `\videos` | 影片輸出目錄（自動建立） |
@@ -201,6 +202,9 @@ python ML_Physics_Hybrid_Predictor.py --model baseball_dual_model.pkl --ev_boost
 - 模型訓練超參數
 - 物理模擬參數
 - 球場設定
+    - 預設球場參數
+    - 特定球場設定檔（`ballpark_data.json`）
+    - 球場 ID 映射表
 - 影片錄製參數（FPS、解析度、旋轉與否等）
 - 日誌等級與輸出
 
@@ -323,11 +327,17 @@ v1.2.0 (2026-02-24)
 - 支援軌跡動畫影片錄製（自動旋轉視角）
 - 支援多軌跡靜態比較
 - 影片參數可透過設定檔調整
-- 已知問題（待修正）：軌跡影片阻塞進程
+- 已知問題（待修正）：軌跡影片渲染阻塞進程
 
-v2.1.0 (規劃中)
-- 支援多球場選擇（使用者可切換球場參數）
+v2.0.1 (2026-02-27)
+- 支援繪圖大聯盟各球場（使用者可切換球場參數）
+- 注意：模型尚未支持特定球場參數，為同一判讀。
+
+
+v3.0.1 (規劃中)
 - Web 介面版本 (Flask + React) 或其他方式包裝
+
+---
 
 ### 授權條款
 本專案僅供學術研究與個人學習使用，嚴禁用於商業賭博或任何違法用途。
