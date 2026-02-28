@@ -143,6 +143,7 @@ python ML_Physics_Hybrid_Predictor.py --model baseball_dual_model.pkl --ev_boost
 - `calculate_trajectory()`：4 階 Runge-Kutta 數值積分（含空氣阻力）。
 - `draw_field()`：繪製內野鑽石、外野全壘打牆（依角度變動距離）。
 - 支援預設球場繪製及特定大聯盟球場繪製（設定檔： `ballpark_data/ballpark_data.json` ）
+- `check_wall_collision`：確認是否飛過牆面或撞擊牆面，利用物理遮罩掩護模型在深遠飛球及對不同形狀球場的判斷錯誤
 
 ### Evaluate_Model.py
 - 載入模型 bundle，對測試集進行串接預測。
@@ -333,6 +334,9 @@ v2.0.1 (2026-02-27)
 - 支援繪圖大聯盟各球場（使用者可切換球場參數）
 - 注意：模型尚未支持特定球場參數，為同一判讀。
 
+v2.0.2 (2026-02-27)
+- 更新資料抓取，新增紀錄球場名稱及編號
+- 修正 v2.0.1 中未支持球場參數的問題，模型訓練及預測加入球場資料參考
 
 v3.0.1 (規劃中)
 - Web 介面版本 (Flask + React) 或其他方式包裝
