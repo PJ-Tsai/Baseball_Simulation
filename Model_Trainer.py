@@ -63,23 +63,51 @@ def get_base_params(is_regressor=True):
     return params
 
 def align_and_preprocess(df, reg_feat=None, clf_feat=None):
-    """統一預處理與特徵對齊"""
+    """
+    優化版：精簡特徵並加入「球場+方向」空間加權特徵
+    """
     df = df.copy()
+    
+    # 1. 處理目標標籤與基本清洗
     df['target_class'] = df['result_label'].map(LABEL_MAP)
+    # 確保 park_id 為整數，若缺失則補上 0
+    df['park_id'] = df['park_id'].fillna(0).astype(int)
+    
+    # 2. 【核心新增：方向加權】
+    # 將 spray_angle 劃分為更細緻的方位區塊 (Zones)
+    # 15度為一級，這能涵蓋芬威左外野 (-45 ~ -20) 的特殊範圍
+    df['spray_zone'] = pd.cut(df['spray_angle'], 
+                             bins=[-90, -30, -15, 0, 15, 30, 90], 
+                             labels=['LF_Ext', 'LF', 'LC', 'RC', 'RF', 'RF_Ext'])
+    
+    # 建立「球場_方位」交互字串 (例如："3_LF")
+    df['park_zone_key'] = df['park_id'].astype(str) + "_" + df['spray_zone'].astype(str)
+    
+    # 3. 類別特徵轉換：同時對 bb_type, park_id 與新的 park_zone 進行 One-hot 編碼
+    # 加入 pkzn 讓模型能針對「特定球場的特定方位」學習權重
+    df = pd.get_dummies(df, columns=['bb_type', 'park_id', 'park_zone_key'], 
+                         prefix=['type', 'park', 'pkzn'])
+    
     df = df.dropna(subset=['target_class', 'hit_distance_sc'])
     
-    # One-hot 擊球類型
-    df = pd.get_dummies(df, columns=['bb_type'], prefix='type')
-    
+    # 4. 迴歸器特徵：保留物理參數以預測距離
     if reg_feat is None:
         reg_feat = ['launch_speed', 'launch_angle', 'spray_angle']
         reg_feat += [c for c in df.columns if c.startswith('type_')]
+        reg_feat += [c for c in df.columns if c.startswith('park_')]
     
+    # 5. 【優化組合】分類器特徵：加入空間加權特徵 pkzn
     if clf_feat is None:
-        clf_feat = reg_feat + ['hit_distance_sc'] # 串接：分類器特徵包含距離
+        # 核心空間組：距離 + 仰角 + 噴射角
+        clf_feat = ['hit_distance_sc', 'launch_angle', 'spray_angle'] 
+        # 球場基礎權重
+        clf_feat += [c for c in df.columns if c.startswith('park_')]
+        # 方向加權組：讓模型學會芬威左外野與一般球場左外野的差異
+        clf_feat += [c for c in df.columns if c.startswith('pkzn_')]
 
-    # 增量訓練關鍵：補齊缺失特徵
-    for col in clf_feat:
+    # 6. 補齊缺失特徵 (確保訓練/預測時的欄位一致性)
+    all_needed_feats = list(set(reg_feat + clf_feat))
+    for col in all_needed_feats:
         if col not in df.columns:
             df[col] = 0
             

@@ -31,7 +31,7 @@ case $choice in
     2)
         # 為防止資料量過大
         # 只使用 2024 年度的數據進行訓練
-        files=$(ls datasets/ | grep "ml_data_2024" | grep ".csv")
+        files=$(ls datasets/ | grep "ml_data" | grep ".csv")
         echo "即將合併以下檔案: $files"
 
         python $TRAINER --mode full --files $files --model "$MODEL_NAME"

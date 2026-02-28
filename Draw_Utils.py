@@ -494,6 +494,45 @@ def list_available_parks():
     
     return PARK_ID_MAPPING
 
+def check_wall_collision(trajectory_data):
+    """
+    分析軌跡數據，判定是否撞牆、過牆或普通飛球。
+    
+    Args:
+        trajectory_data: calculate_trajectory 回傳的字典
+        
+    Returns:
+        str: "HR" (過牆), "DOUBLE" (撞牆安打), "OUT" (牆前落下/被接殺候補), None (未達外野)
+    """
+    park_config = trajectory_data['park_config']
+    x, y, z = trajectory_data['x'], trajectory_data['y'], trajectory_data['z']
+    
+    # 遍歷軌跡點
+    for i in range(len(x)):
+        # 計算相對於本壘的水平距離 (m)
+        curr_dist = math.sqrt(x[i]**2 + y[i]**2)
+        
+        # 計算當前點的方向角 (0~90度，對齊 ballpark_data 座標系)
+        curr_angle = math.degrees(math.atan2(y[i], x[i]))
+        
+        # 取得該角度下的圍牆物理限制
+        wall_dist = get_wall_distance(curr_angle, park_config)
+        
+        if curr_dist >= wall_dist:
+            # 球到達或越過圍牆所在的距離
+            wall_height = get_wall_height(curr_angle, park_config)
+            ball_height = z[i]
+            
+            if ball_height > wall_height and ball_height > 2.5:  # 某些場地全壘打牆低，即使球高過牆也可能被接殺
+                return "HR"  # 飛行高度高於牆頂
+            elif ball_height > 2.5:
+                return "DOUBLE"  # 飛行高度高於地面但未過牆
+            else:
+                return "IN_PLAY"  # 牆前落下，可能被接殺或形成安打候補
+                
+    # 如果球落地(z<0)前都沒超過 wall_dist，代表是場內球
+    return "IN_PLAY"
+
 if __name__ == "__main__":
     # 測試腳本
     logger.info("執行 Draw_Utils 測試")

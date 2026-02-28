@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import random
 import os
 import datetime
-from Draw_Utils import draw_field, calculate_trajectory, get_park_config, get_park_name_by_id
+from Draw_Utils import draw_field, calculate_trajectory, get_park_config, get_park_name_by_id, check_wall_collision
 from Config_Loader import config
 from Logger_Setup import setup_logger, log_execution_time, ProgressLogger
 from Visualization_3D import Baseball3DVisualizer, TrajectoryVideoRecorder
@@ -154,31 +154,47 @@ class BaseballPredictorEngine:
         speed_mph = self.adaptive_boost(speed_mph, ev_boost, boost_type='EV')
         v_kmh = speed_mph * 1.60934
         bb_type = self._get_bb_type(angle_deg)
+
+        bins = [-90, -30, -15, 0, 15, 30, 90]
+        labels = ['LF_Ext', 'LF', 'LC', 'RC', 'RF', 'RF_Ext']
+        # 判斷當前 spray_deg 屬於哪個區塊
+        zone_idx = np.digitize(spray_deg, bins) - 1
+        zone_idx = max(0, min(zone_idx, len(labels) - 1)) # 邊界保護
+        current_zone = labels[zone_idx]
+        current_pkzn = f"{self.park_id}_{current_zone}"
         
         # 1. 第一階段：迴歸預測飛行距離
-        reg_df = pd.DataFrame([{
+        # 建立一個字典來存放所有特徵，避免逐次插入欄位
+        reg_data = {
             'launch_speed': speed_mph,
             'launch_angle': angle_deg,
             'spray_angle': spray_deg
-        }])
+        }
         
-        # 自動補齊 One-hot 欄位
         for feat in self.reg_features:
             if feat.startswith('type_'):
-                reg_df[feat] = 1 if f"type_{bb_type}" == feat else 0
+                reg_data[feat] = 1 if f"type_{bb_type}" == feat else 0
+            elif feat.startswith('park_'):
+                reg_data[feat] = 1 if f"park_{self.park_id}" == feat else 0
         
+        reg_df = pd.DataFrame([reg_data])
         pred_dist_ft = float(self.reg.predict(reg_df[self.reg_features])[0])
-        logger.debug(f"迴歸預測距離: {pred_dist_ft:.1f}ft")
         
-        pred_dist_ft = self.adaptive_boost(pred_dist_ft, dist_boost, boost_type='DIST')
-
         # 2. 第二階段：分類預測結果
-        clf_df = reg_df.copy()
-        clf_df['hit_distance_sc'] = pred_dist_ft
+        # 直接在字典中加入預測距離
+        clf_data = reg_data.copy()
+        clf_data['hit_distance_sc'] = pred_dist_ft
+        
+        # 批量處理分類器特徵，消除 PerformanceWarning
         for feat in self.clf_features:
-            if feat not in clf_df.columns: 
-                clf_df[feat] = 0
-            
+            if feat not in clf_data:
+                if feat.startswith('pkzn_'):
+                    clf_data[feat] = 1 if feat == current_pkzn else 0
+                else:
+                    clf_data[feat] = 0
+        
+        clf_df = pd.DataFrame([clf_data])
+        
         y_probs = self.clf.predict_proba(clf_df[self.clf_features])[0]
         pred_label = self.target_names[np.argmax(y_probs)]
         
@@ -187,14 +203,30 @@ class BaseballPredictorEngine:
         # 3. 物理軌跡擬合
         fitted_traj = self.find_fitted_trajectory(v_kmh, angle_deg, spray_deg, pred_dist_ft)
 
+        if -45 <= spray_deg <= 45:
+        # 直接利用算好的軌跡進行判定
+            physics_result = check_wall_collision(fitted_traj)
+            
+            # 只要物理判定認為是長打，就強制覆蓋 AI (AI 常因樣本不平衡誤判為 OUT)
+            if physics_result in ["HR", "DOUBLE"]:
+                logger.info(f"物理判定覆蓋 AI ({pred_label} -> {physics_result})")
+                pred_label = physics_result
+                hit_prob = 1.0  # 強制提升命中機率
+            else:  
+                hit_prob = 1 - y_probs[0]  # OUT 的機率
+        else:
+            pred_label = "Foul"
+            hit_prob = 0
+
+
         result = {
             'input_speed': speed_mph,
             'input_angle': angle_deg,
             'input_spray': spray_deg,
             'boosted_speed': speed_mph,
             'pred_dist_ft': pred_dist_ft,
-            'result_class': "Foul" if not (-45 <= spray_deg <= 45) else pred_label,
-            'hit_prob': 1 - y_probs[0],
+            'result_class': pred_label,
+            'hit_prob': hit_prob,
             'cd': fitted_traj['cd'],
             'trajectory': fitted_traj,  # 紀錄軌跡提供影片繪畫使用
             'park_id': self.park_id,
