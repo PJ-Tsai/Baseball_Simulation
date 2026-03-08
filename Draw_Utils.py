@@ -502,7 +502,7 @@ def check_wall_collision(trajectory_data):
         trajectory_data: calculate_trajectory 回傳的字典
         
     Returns:
-        str: "HR" (過牆), "DOUBLE" (撞牆安打), "OUT" (牆前落下/被接殺候補), None (未達外野)
+        str: "HR" (過牆), "DOUBLE" (撞牆安打), "In_PLAY" (交由模型判斷)
     """
     park_config = trajectory_data['park_config']
     x, y, z = trajectory_data['x'], trajectory_data['y'], trajectory_data['z']
@@ -528,7 +528,7 @@ def check_wall_collision(trajectory_data):
             elif ball_height > 2.5:
                 return "DOUBLE"  # 飛行高度高於地面但未過牆
             else:
-                return "IN_PLAY"  # 牆前落下，可能被接殺或形成安打候補
+                return "IN_PLAY"  # 可能被接殺或形成安打候補，交由模型判斷
                 
     # 如果球落地(z<0)前都沒超過 wall_dist，代表是場內球
     return "IN_PLAY"

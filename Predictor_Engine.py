@@ -1,9 +1,11 @@
+from unittest import result
+
 import joblib
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import random
-import os
+import threading
 import datetime
 from Draw_Utils import draw_field, calculate_trajectory, get_park_config, get_park_name_by_id, check_wall_collision
 from Config_Loader import config
@@ -31,12 +33,7 @@ CHEAT_CONFIG = config.get('cheat_mode')
 class BaseballPredictorEngine:
     @log_execution_time()
     def __init__(self, model_path=None):
-        """初始化引擎，載入模型與特徵設定
-        
-        Args:
-            model_path: 模型檔案路徑
-            park_id: 預設球場ID (0=通用球場)
-        """
+        """初始化引擎，載入模型與特徵設定"""
         if model_path is None:
             model_path = config.get('model', 'name')
         
@@ -75,8 +72,126 @@ class BaseballPredictorEngine:
         )
         self.visualizer = Baseball3DVisualizer()
         self.cheat_config = CHEAT_CONFIG
+
+        # 儲存待處理的圖表和動畫
+        self._pending_plots = []
+        self._pending_animations = []
+        
+        # tkinter root 物件（稍後設定）
+        self.root = None
+        
+        # 標記是否已經設定定時器
+        self._timer_set = False
+        
+        # 儲存定時器 ID
+        self._timer_id = None
+        
+        # 註冊主執行緒的定時檢查
+        self._setup_plot_handler()
+
+    def _setup_plot_handler(self):
+        """設定圖表處理器"""
+        import threading
+        if threading.current_thread() is threading.main_thread():
+            # 如果在主執行緒，但不立即設定定時器
+            # 等待 tkinter root 設定後再啟用
+            pass
     
-    @log_execution_time()
+    def _check_pending_plots(self):
+        """檢查並處理待顯示的圖表"""
+        import threading
+        if threading.current_thread() is not threading.main_thread():
+            return
+        
+        # 檢查 root 是否還有效
+        if self.root is None:
+            return
+            
+        try:
+            # 檢查 root 是否存在
+            if not self.root.winfo_exists():
+                self._timer_set = False
+                self.root = None
+                return
+        except Exception:
+            self._timer_set = False
+            self.root = None
+            return
+        
+        # 如有待處理的圖表，通知 GUI 來處理，而不是直接顯示
+        if hasattr(self, '_pending_plots') and self._pending_plots:
+            try:
+                # 觸發 GUI 的圖表處理事件
+                if hasattr(self.root, 'event_generate'):
+                    self.root.event_generate('<<ProcessPendingPlots>>', when='tail')
+            except Exception as e:
+                logger.error(f"觸發圖表處理事件失敗: {e}")
+        
+        # 如有待處理的動畫，通知 GUI 來處理
+        if hasattr(self, '_pending_animations') and self._pending_animations:
+            try:
+                # 觸發 GUI 的動畫處理事件
+                if hasattr(self.root, 'event_generate'):
+                    self.root.event_generate('<<ProcessPendingAnimations>>', when='tail')
+            except Exception as e:
+                logger.error(f"觸發動畫處理事件失敗: {e}")
+        
+        # 重新排程下一次檢查
+        self._schedule_check()
+    
+    def _schedule_check(self):
+        """使用 tkinter 的 after 方法排程下一次檢查"""
+        if self.root is not None:
+            try:
+                # 檢查 root 是否還有效
+                if self.root.winfo_exists():
+                    # 取消舊的定時器
+                    self._cancel_timer()
+                    # 設定新的定時器
+                    self._timer_id = self.root.after(1000, self._check_pending_plots)
+                else:
+                    self._timer_set = False
+                    self.root = None
+            except Exception as e:
+                logger.error(f"設定定時器失敗: {e}")
+                self._timer_set = False
+                self.root = None
+    
+    def _cancel_timer(self):
+        """取消定時器"""
+        if self._timer_id is not None:
+            try:
+                if self.root and self.root.winfo_exists():
+                    self.root.after_cancel(self._timer_id)
+            except Exception as e:
+                logger.debug(f"取消定時器失敗: {e}")
+            finally:
+                self._timer_id = None
+    
+    def set_tk_root(self, root):
+        """設定 tkinter root 用於定時器"""
+        # 取消舊的定時器
+        self._cancel_timer()
+        
+        self.root = root
+        # 立即檢查一次待處理的圖表
+        self._check_pending_plots()
+        # 如果還沒有設定定時器，現在設定
+        if not self._timer_set:
+            self._timer_set = True
+            self._schedule_check()
+    
+    def __del__(self):
+        """解構函數，確保定時器被取消"""
+        self.cleanup()
+    
+    def cleanup(self):
+        """清理資源，取消定時器"""
+        self._cancel_timer()
+        self.root = None
+        self._timer_set = False
+        logger.debug("引擎資源已清理")
+
     def set_park(self, park_id):
         """設定球場ID
         
@@ -236,7 +351,13 @@ class BaseballPredictorEngine:
 
         # 4. 展示結果
         if Is_plot:
-            self.visualize_result(speed_mph, angle_deg, spray_deg, result)
+            if threading.current_thread() is threading.main_thread():
+                self.visualize_result(speed_mph, angle_deg, spray_deg, result)
+            else:
+                # 如果在執行緒中，延後到主執行緒執行
+                logger.info("圖表顯示將在批次處理完成後統一顯示")
+                # 可以將結果儲存起來，稍後在主執行緒顯示
+                self._pending_plots.append(result)
         
         # 5. 儲存影片（如果需要）- 自動旋轉視角
         if Video_save:
@@ -252,20 +373,28 @@ class BaseballPredictorEngine:
         
         # 6. 顯示互動式動畫（如果需要）- 可手動控制視角
         if self.video_recorder.show_animation:
-            print("\n顯示互動式動畫（可用滑鼠拖曳旋轉視角）...")
-            self.video_recorder.show_trajectory_animation(
-                fitted_traj,
-                title=f"{result['result_class']}: {speed_mph:.0f}mph, {angle_deg:.0f}°"
-            )
+            if threading.current_thread() is threading.main_thread():
+                print("\n顯示互動式動畫（可用滑鼠拖曳旋轉視角）...")
+                self.video_recorder.show_trajectory_animation(
+                    fitted_traj,
+                    title=f"{result['result_class']}: {speed_mph:.0f}mph, {angle_deg:.0f}°",
+                    park_id=self.park_id  # 確保傳入當前的 park_id
+                )
+            else:
+                logger.info("動畫顯示將在批次處理完成後統一顯示")
+                self._pending_animations.append((fitted_traj, result))
 
         return result
 
     def visualize_result(self, speed_mph, angle_deg, spray_deg, result):
-        """視覺化繪圖 - 支援特定球場"""
+        """視覺化繪圖 - 支援特定球場，返回 figure 物件"""
         # 獲取球場名稱
         park_id = result['park_id']
         park_name = get_park_name_by_id(park_id)
         park_config = get_park_config(park_id)
+        
+        # 關閉互動模式
+        plt.ioff()
         
         fig = plt.figure(figsize=(14, 8))
         
@@ -323,12 +452,12 @@ class BaseballPredictorEngine:
 
         # 繪製軌跡
         ax_3d.plot(traj_data['x'], traj_data['y'], traj_data['z'], 
-                   color=traj_color, lw=3, label='ML-Hybrid Path')
+                color=traj_color, lw=3, label='ML-Hybrid Path')
         
         # 標記落點
         if len(traj_data['x']) > 0:
             ax_3d.scatter(traj_data['x'][-1], traj_data['y'][-1], 0, 
-                         color=traj_color, s=100, marker='o', label='Landing Point')
+                        color=traj_color, s=100, marker='o', label='Landing Point')
 
         # 動態調整顯示範圍
         if park_config['type'] == 'generic':
@@ -354,7 +483,11 @@ class BaseballPredictorEngine:
         ax_3d.legend()
         
         plt.tight_layout()
-        plt.show()
+        
+        # 確保不會自動顯示
+        plt.close(fig)
+        
+        return fig
 
     def _save_trajectory_video_from_result(self, result, speed_mph, angle_deg, spray_deg):
         """
@@ -367,7 +500,7 @@ class BaseballPredictorEngine:
             spray_deg: 噴射角
         
         Returns:
-            str: 影片儲存路徑，失敗則回傳 None
+            str: 影片儲存路徑，如果任務被排入佇列則回傳 None
         """
         try:
             if 'trajectory' not in result:
