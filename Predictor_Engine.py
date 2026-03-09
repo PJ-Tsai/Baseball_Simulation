@@ -355,7 +355,7 @@ class BaseballPredictorEngine:
                 self.visualize_result(speed_mph, angle_deg, spray_deg, result)
             else:
                 # 如果在執行緒中，延後到主執行緒執行
-                logger.info("圖表顯示將在批次處理完成後統一顯示")
+                logger.info("圖表顯示將在處理完成後統一顯示")
                 # 可以將結果儲存起來，稍後在主執行緒顯示
                 self._pending_plots.append(result)
         
@@ -381,7 +381,7 @@ class BaseballPredictorEngine:
                     park_id=self.park_id  # 確保傳入當前的 park_id
                 )
             else:
-                logger.info("動畫顯示將在批次處理完成後統一顯示")
+                logger.info("動畫顯示將在處理完成後統一顯示")
                 self._pending_animations.append((fitted_traj, result))
 
         return result

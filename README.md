@@ -14,6 +14,7 @@
 - **可視化儀表板**：3D 球場 + 軌跡繪製 + 完整分析報表。
 - **增量訓練支援**：可載入舊模型，僅用新數據微調，適應最新賽季。
 - **作弊模式 (Cheat Mode)**：提供 EV 與距離補償增益，用於「如果球打得更強勁會怎樣？」的情境分析。（或是用來自我欺騙（ｘ））
+- **tkinter 圖形介面（tkinter GUI）**：提供圖形介面簡化操作。
 
 ---
 
@@ -25,12 +26,15 @@ graph TD
     B --> C[Predictor Engine<br/>核心推論引擎]
     C --> D[Draw_Utils<br/>物理模擬/繪圖]
     C --> E[Visualization_3D<br/>動畫/影片錄製]
+    D --> F[Baseball_Predictor_GUI<br/>tkinter GUI 圖形介面]
+    E --> F[Baseball_Predictor_GUI<br/>tkinter GUI 圖形介面]
     
     style A fill:#f9f,stroke:#333,stroke-width:2px
     style B fill:#bbf,stroke:#333,stroke-width:2px
     style C fill:#bfb,stroke:#333,stroke-width:2px
     style D fill:#fbb,stroke:#333,stroke-width:2px
     style E fill:#ff9,stroke:#333,stroke-width:2px
+    style F fill:#fc9,stroke:#333,stroke-width:2px
 ```
 
 - **Data_Utils.py**：Statcast 數據獲取、清洗、特徵工程。
@@ -84,7 +88,10 @@ python Data_Utils.py --year 2024 --month 6 --dir datasets
 - 執行模型評估：顯示分類指標、混淆矩陣、距離預測誤差。
 - 使用模型進行預測：進入互動式預測模式。
 
-3. 進行預測
+### 3.1 Terminal 中預測
+:::warning
+可改用後續新增的 GUI 介面更方便操作 
+:::
 選擇選項 5 後，可進入三種模式：
 - 批量 CSV 處理：輸入 CSV 路徑，檔案需包含 `launch_speed`, `launch_angle`, `spray_angle`。
 - 即時手動輸入：逐筆輸入初速(mph)、仰角(°)、噴射角(°)。
@@ -96,6 +103,12 @@ python Data_Utils.py --year 2024 --month 6 --dir datasets
 python ML_Physics_Hybrid_Predictor.py --model baseball_dual_model.pkl --ev_boost 1.2 --dist_boost 1.1
 ```
 這會將低於 85 mph 的初速及低於 300 ft 的距離進行補償放大，模擬「最佳狀況」的擊球。
+
+### 3.2 GUI 中預測
+```bash
+./Run_Gui.sh
+```
+在介面中選取需要的模式進行預測，流程與 3.1 類似。
 
 ---
 
@@ -157,17 +170,21 @@ python ML_Physics_Hybrid_Predictor.py --model baseball_dual_model.pkl --ev_boost
 
 ### Visualization_3D.py
 - `Baseball3DVisualizer` 類別：
-    - add_trajectory()：加入多條軌跡進行比較（不同顏色、標籤）。
-    - create_static_3d_plot()：繪製靜態多軌跡圖，標示起點（圓點）與終點（叉號）。
-    - setup_3d_plot()：統一設定 3D 圖表樣式（座標範圍、標籤、視角）。
+    - `add_trajectory()`：加入多條軌跡進行比較（不同顏色、標籤）。
+    - `create_static_3d_plot()`：繪製靜態多軌跡圖，標示起點（圓點）與終點（叉號）。
+    - `setup_3d_plot()`：統一設定 3D 圖表樣式（座標範圍、標籤、視角）。
 
 - `TrajectoryVideoRecorder` 類別：
     - `record_single_trajectory()`：將單一軌跡錄製為 MP4 影片，支援自動旋轉視角功能，方便全方位觀察。
     - `show_trajectory_animation()`：即時顯示軌跡動畫（可手動拖曳視角），適合互動式探索。
     - 影片參數可調：FPS、DPI、旋轉與否、編碼器等皆可透過 config.yaml 設定。
-    - 自動輸出目錄：影片預設儲存至 videos/ 目錄，檔名自動包含時間戳記。
+    - 自動輸出目錄：影片預設儲存至 `videos/` 目錄，檔名自動包含時間戳記。
 
-- 配置整合：球場尺寸、影片設定皆從 config.yaml 讀取，確保一致性。
+- 配置整合：球場尺寸、影片設定皆從 `config.yaml` 讀取，確保一致性。
+
+### Baseball_Predictor_GUI.py
+- `TextRedirector` 類別：將 `stdout/stderr` 重定向到 `tkinter` 文字元件
+- `BaseballPredictorGUI` 類別： `tkinter` 介面設定
 
 ## 檔案說明
 
@@ -191,6 +208,8 @@ python ML_Physics_Hybrid_Predictor.py --model baseball_dual_model.pkl --ev_boost
 | `Evaluate_Model.py` | 模型評估視覺化 |
 | `Get_Data.sh` | 數據下載腳本 |
 | `Model_Pipeline.sh` | 訓練/評估/預測整合選單 |
+| `Baseball_Predictor_GUI.py` | 生成 tkinter GUI 介面 |
+| `Run_Gui.sh` | GUI 介面腳本 |
 | `baseball_dual_model.pkl` | 預訓練模型範例（需自行生成） |
 
 ---
@@ -328,18 +347,25 @@ v1.2.0 (2026-02-24)
 - 支援軌跡動畫影片錄製（自動旋轉視角）
 - 支援多軌跡靜態比較
 - 影片參數可透過設定檔調整
-- 已知問題（待修正）：軌跡影片渲染阻塞進程
+- 已知問題（~~待修正~~）：軌跡影片渲染阻塞進程 -> **v3.0.1 中已修正**
 
 v2.0.1 (2026-02-27)
 - 支援繪圖大聯盟各球場（使用者可切換球場參數）
-- 注意：模型尚未支持特定球場參數，為同一判讀。
+- 注意：模型尚未支持特定球場參數，為同一判讀
 
 v2.0.2 (2026-02-27)
 - 更新資料抓取，新增紀錄球場名稱及編號
 - 修正 v2.0.1 中未支持球場參數的問題，模型訓練及預測加入球場資料參考
 
-v3.0.1 (規劃中)
-- Web 介面版本 (Flask + React) 或其他方式包裝
+v3.0.1 (2026-03-08)
+- 增加 GUI 簡化操作
+- 注意：尚未測試即時輸入模式，可使用單次預測作為代替
+- 注意：GUI 仍有部分 bug 可能造成體驗感不佳
+- 已知問題（~~待修正~~）：隨機預測及批量處理時只會顯示最後一筆資料的圖表及影片（預測結果會正常輸出至 CSV 檔中） -> **v3.0.2 中已修正**
+
+v3.0.2 (2026-03-09)
+- 修正 v3.0.1 中只顯示最後一筆資料的問題，可從歷史紀錄中選擇想查看的資料
+- 注意：圖表頁面儲存、清除圖表、前／後一筆資料按鈕仍有 bug 尚未處理。
 
 ---
 

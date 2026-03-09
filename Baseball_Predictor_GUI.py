@@ -49,6 +49,187 @@ class TextRedirector(io.StringIO):
     def flush(self):
         pass
 
+class ResultSelectorDialog:
+    """結果選擇對話框"""
+    def __init__(self, parent, results, title="選擇要查看的結果"):
+        self.parent = parent
+        self.results = results
+        self.selected_indices = []
+        self.result = None
+        
+        # 創建對話框
+        self.dialog = tk.Toplevel(parent)
+        self.dialog.title(title)
+        self.dialog.geometry("800x500")
+        self.dialog.transient(parent)
+        self.dialog.grab_set()
+        
+        self.create_widgets()
+        
+    def create_widgets(self):
+        # 說明標籤
+        ttk.Label(self.dialog, text="請選擇要查看詳細分析的結果（可多選）:", 
+                 font=('Arial', 11)).pack(pady=5)
+        
+        # 創建主框架
+        main_frame = ttk.Frame(self.dialog)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        # 左側列表框架
+        list_frame = ttk.LabelFrame(main_frame, text="測試結果列表", padding=5)
+        list_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        # 創建帶滾動條的列表框
+        list_container = ttk.Frame(list_frame)
+        list_container.pack(fill=tk.BOTH, expand=True)
+        
+        scrollbar = ttk.Scrollbar(list_container)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        self.listbox = tk.Listbox(list_container, selectmode=tk.EXTENDED,
+                                  yscrollcommand=scrollbar.set,
+                                  font=('Consolas', 10))
+        self.listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        scrollbar.config(command=self.listbox.yview)
+        
+        # 右側預覽框架
+        preview_frame = ttk.LabelFrame(main_frame, text="預覽資訊", padding=5)
+        preview_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+        
+        self.preview_text = scrolledtext.ScrolledText(
+            preview_frame, wrap=tk.WORD,
+            font=('Consolas', 10),
+            width=40
+        )
+        self.preview_text.pack(fill=tk.BOTH, expand=True)
+        
+        # 填充列表
+        for i, result in enumerate(self.results):
+            display_text = f"{i+1:3d}. {result['result_class']:8s} | "
+            display_text += f"{result['input_speed']:5.1f}mph | "
+            display_text += f"{result['input_angle']:5.1f}° | "
+            display_text += f"{result['input_spray']:5.1f}° | "
+            display_text += f"距離: {result['pred_dist_ft']:5.1f}ft"
+            self.listbox.insert(tk.END, display_text)
+        
+        # 綁定選擇事件
+        self.listbox.bind('<<ListboxSelect>>', self.on_select)
+        
+        # 按鈕框架
+        btn_frame = ttk.Frame(self.dialog)
+        btn_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        # 選擇按鈕
+        ttk.Button(btn_frame, text="全選", command=self.select_all).pack(side=tk.LEFT, padx=2)
+        ttk.Button(btn_frame, text="清除選擇", command=self.clear_selection).pack(side=tk.LEFT, padx=2)
+        ttk.Button(btn_frame, text="反選", command=self.invert_selection).pack(side=tk.LEFT, padx=2)
+        
+        ttk.Separator(btn_frame, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=10)
+        
+        # 統計資訊
+        self.stats_label = ttk.Label(btn_frame, text="")
+        self.stats_label.pack(side=tk.LEFT, padx=10)
+        
+        # 確認取消按鈕
+        confirm_frame = ttk.Frame(self.dialog)
+        confirm_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        ttk.Button(confirm_frame, text="查看選中結果", 
+                  command=self.confirm, style='Accent.TButton').pack(side=tk.RIGHT, padx=2)
+        ttk.Button(confirm_frame, text="取消", 
+                  command=self.cancel).pack(side=tk.RIGHT, padx=2)
+        
+        self.update_stats()
+    
+    def on_select(self, event):
+        """選擇事件"""
+        self.update_preview()
+        self.update_stats()
+    
+    def update_preview(self):
+        """更新預覽資訊"""
+        selection = self.listbox.curselection()
+        if not selection:
+            self.preview_text.delete(1.0, tk.END)
+            return
+        
+        # 顯示第一個選中項目的詳細資訊
+        idx = selection[0]
+        result = self.results[idx]
+        
+        self.preview_text.delete(1.0, tk.END)
+        self.preview_text.insert(tk.END, f"詳細資訊 - 組 #{idx+1}\n")
+        self.preview_text.insert(tk.END, f"{'='*40}\n\n")
+        
+        self.preview_text.insert(tk.END, "【輸入參數】\n")
+        self.preview_text.insert(tk.END, f"  初速: {result['input_speed']:.1f} mph\n")
+        self.preview_text.insert(tk.END, f"  仰角: {result['input_angle']:.1f}°\n")
+        self.preview_text.insert(tk.END, f"  噴射角: {result['input_spray']:.1f}°\n")
+        self.preview_text.insert(tk.END, f"  擊球類型: {result['bb_type']}\n\n")
+        
+        self.preview_text.insert(tk.END, "【預測結果】\n")
+        self.preview_text.insert(tk.END, f"  結果: {result['result_class']}\n")
+        self.preview_text.insert(tk.END, f"  命中機率: {result['hit_prob']:.1%}\n")
+        self.preview_text.insert(tk.END, f"  預測距離: {result['pred_dist_ft']:.1f} ft\n\n")
+        
+        self.preview_text.insert(tk.END, "【物理參數】\n")
+        self.preview_text.insert(tk.END, f"  滯空時間: {result['trajectory']['hang_time']:.2f} s\n")
+        self.preview_text.insert(tk.END, f"  阻力係數: {result['cd']:.3f}\n")
+        
+        if result.get('is_foul', False):
+            self.preview_text.insert(tk.END, "\n此為界外球\n")
+    
+    def update_stats(self):
+        """更新統計資訊"""
+        selection = self.listbox.curselection()
+        total = len(self.results)
+        selected = len(selection)
+        
+        self.stats_label.config(text=f"已選擇: {selected}/{total} 組")
+    
+    def select_all(self):
+        """全選"""
+        self.listbox.selection_set(0, tk.END)
+        self.update_preview()
+        self.update_stats()
+    
+    def clear_selection(self):
+        """清除選擇"""
+        self.listbox.selection_clear(0, tk.END)
+        self.update_preview()
+        self.update_stats()
+    
+    def invert_selection(self):
+        """反選"""
+        total = self.listbox.size()
+        for i in range(total):
+            if i in self.listbox.curselection():
+                self.listbox.selection_clear(i)
+            else:
+                self.listbox.selection_set(i)
+        self.update_preview()
+        self.update_stats()
+    
+    def confirm(self):
+        """確認選擇"""
+        self.selected_indices = list(self.listbox.curselection())
+        if not self.selected_indices:
+            messagebox.showwarning("警告", "請至少選擇一組結果")
+            return
+        self.dialog.destroy()
+    
+    def cancel(self):
+        """取消"""
+        self.selected_indices = []
+        self.dialog.destroy()
+    
+    def get_selected_results(self):
+        """獲取選中的結果"""
+        if not self.selected_indices:
+            return []
+        return [self.results[i] for i in self.selected_indices]
+
 class BaseballPredictorGUI:
     def __init__(self, root):
         self.root = root
@@ -384,7 +565,7 @@ class BaseballPredictorGUI:
     def create_control_panel(self, parent):
         """創建左側控制面板"""
         # 標題
-        title_label = ttk.Label(parent, text="⚾ 擊球分析控制面板", 
+        title_label = ttk.Label(parent, text="擊球分析控制面板", 
                                font=('Arial', 16, 'bold'))
         title_label.pack(pady=10)
         
@@ -560,9 +741,36 @@ class BaseballPredictorGUI:
     
     def create_plot_tab(self):
         """創建圖表顯示頁面"""
-        # 創建 matplotlib 圖形框架
-        self.plot_canvas_frame = ttk.Frame(self.plot_frame)
-        self.plot_canvas_frame.pack(fill=tk.BOTH, expand=True)
+        # 創建一個整體的垂直布局
+        main_container = ttk.Frame(self.plot_frame)
+        main_container.pack(fill=tk.BOTH, expand=True)
+        
+        # 頂部按鈕框架 - 放在最上面
+        top_button_frame = ttk.Frame(main_container)
+        top_button_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        # 圖表控制按鈕
+        ttk.Button(top_button_frame, text="儲存圖表", 
+                command=self.save_plot).pack(side=tk.LEFT, padx=2)
+        
+        ttk.Button(top_button_frame, text="清除圖表", 
+                command=self.clear_plot).pack(side=tk.LEFT, padx=2)
+        
+        # 導航按鈕框架 - 放在圖表控制按鈕旁邊
+        nav_frame = ttk.Frame(top_button_frame)
+        nav_frame.pack(side=tk.LEFT, padx=(20, 2))
+        
+        ttk.Button(nav_frame, text="◀ 上一筆", 
+                command=self.show_previous_result).pack(side=tk.LEFT, padx=2)
+        ttk.Button(nav_frame, text="下一筆 ▶", 
+                command=self.show_next_result).pack(side=tk.LEFT, padx=2)
+        
+        self.result_counter_label = ttk.Label(nav_frame, text="")
+        self.result_counter_label.pack(side=tk.LEFT, padx=10)
+        
+        # 創建 matplotlib 圖形框架 - 放在按鈕下方
+        self.plot_canvas_frame = ttk.Frame(main_container)
+        self.plot_canvas_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
         # 創建一個 Notebook 來切換靜態圖表和動畫
         self.plot_notebook = ttk.Notebook(self.plot_canvas_frame)
@@ -582,16 +790,6 @@ class BaseballPredictorGUI:
         # 初始化動畫
         self._init_animation_plot()
         
-        # 圖表控制按鈕
-        control_frame = ttk.Frame(self.plot_frame)
-        control_frame.pack(fill=tk.X, padx=5, pady=5)
-        
-        ttk.Button(control_frame, text="儲存圖表", 
-                command=self.save_plot).pack(side=tk.LEFT, padx=2)
-        
-        ttk.Button(control_frame, text="清除圖表", 
-                command=self.clear_plot).pack(side=tk.LEFT, padx=2)
-        
     def _init_static_plot(self):
         """初始化靜態圖表"""
         # 創建 matplotlib figure
@@ -604,7 +802,7 @@ class BaseballPredictorGUI:
         self.static_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
         
         # 顯示初始提示
-        self.static_ax.text(0.5, 0.5, 0.5, "Execution results will be displayed here after the prediction is completed.", 
+        self.static_ax.text(0.5, 0.5, 0.5, "Results will be displayed here after the prediction is completed.", 
                             ha='center', va='center', transform=self.static_ax.transAxes)
         self.static_canvas.draw()
 
@@ -627,18 +825,84 @@ class BaseballPredictorGUI:
     
     def create_stats_tab(self):
         """創建統計資訊頁面"""
-        # 統計資訊文字區域
-        self.stats_text = scrolledtext.ScrolledText(
-            self.stats_frame, wrap=tk.WORD,
-            font=('Arial', 11),
-            background='white'
-        )
-        self.stats_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        # 創建一個框架來容納列表和按鈕
+        stats_container = ttk.Frame(self.stats_frame)
+        stats_container.pack(fill=tk.BOTH, expand=True)
         
+        # 左側：歷史記錄列表
+        list_frame = ttk.LabelFrame(stats_container, text="預測歷史記錄", padding=5)
+        list_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
+        
+        # 創建帶滾動條的列表框
+        list_container = ttk.Frame(list_frame)
+        list_container.pack(fill=tk.BOTH, expand=True)
+        
+        scrollbar = ttk.Scrollbar(list_container)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        self.history_listbox = tk.Listbox(
+            list_container, 
+            selectmode=tk.SINGLE,
+            yscrollcommand=scrollbar.set,
+            font=('Consolas', 10),
+            height=20
+        )
+        self.history_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        scrollbar.config(command=self.history_listbox.yview)
+        
+        # 綁定雙擊事件
+        self.history_listbox.bind('<Double-Button-1>', self.on_history_double_click)
+        
+        # 右側：統計資訊文字
+        stats_frame = ttk.LabelFrame(stats_container, text="統計摘要", padding=5)
+        stats_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+        
+        self.stats_text = scrolledtext.ScrolledText(
+            stats_frame, wrap=tk.WORD,
+            font=('Arial', 11),
+            background='white',
+            height=20
+        )
+        self.stats_text.pack(fill=tk.BOTH, expand=True)
+        
+        # 底部按鈕框架
+        btn_frame = ttk.Frame(self.stats_frame)
+        btn_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Button(btn_frame, text="重新整理列表", 
+                command=self.update_stats_display).pack(side=tk.LEFT, padx=2)
+        ttk.Button(btn_frame, text="查看選中結果", 
+                command=self.show_selected_history).pack(side=tk.LEFT, padx=2)
+        ttk.Button(btn_frame, text="清除歷史", 
+                command=self.clear_history).pack(side=tk.LEFT, padx=2)
+
         # 初始化統計資訊
-        self.prediction_history = []
         self.update_stats_display()
     
+    def on_history_double_click(self, event):
+        """雙擊歷史記錄列表的事件處理"""
+        self.show_selected_history()
+
+    def show_selected_history(self):
+        """顯示選中的歷史記錄"""
+        selection = self.history_listbox.curselection()
+        if not selection:
+            messagebox.showinfo("提示", "請先選擇一筆記錄")
+            return
+        
+        index = selection[0]
+        if index < len(self.prediction_history):
+            result = self.prediction_history[index]
+            self._show_selected_results([result])
+
+    def clear_history(self):
+        """清除歷史記錄"""
+        if messagebox.askyesno("確認", "確定要清除所有預測歷史記錄嗎？"):
+            self.prediction_history.clear()
+            self.update_stats_display()
+            self.log_message("已清除所有預測歷史記錄")
+
     def create_park_info_tab(self):
         """創建球場資訊頁面"""
         # 球場資訊文字區域
@@ -798,7 +1062,7 @@ class BaseballPredictorGUI:
         # 開啟對話框詢問測試數量
         dialog = tk.Toplevel(self.root)
         dialog.title("隨機測試設定")
-        dialog.geometry("300x150")
+        dialog.geometry("300x250")
         dialog.transient(self.root)
         dialog.grab_set()
         
@@ -808,23 +1072,34 @@ class BaseballPredictorGUI:
         entry = ttk.Entry(dialog, textvariable=count_var, width=10)
         entry.pack(pady=5)
         
+         # 添加顯示選項
+        ttk.Label(dialog, text="測試完成後:").pack(pady=5)
+        view_option = tk.StringVar(value="select")
+        
+        ttk.Radiobutton(dialog, text="自動顯示最後一組", 
+                    variable=view_option, value="last").pack()
+        ttk.Radiobutton(dialog, text="開啟選擇視窗手動選擇", 
+                    variable=view_option, value="select").pack()
+
         def confirm():
             try:
                 count = int(count_var.get())
+                view_mode = view_option.get()
                 dialog.destroy()
-                self._run_random_test_thread(count)
+                self._run_random_test_thread(count, view_mode=view_mode)
             except ValueError:
                 messagebox.showerror("錯誤", "請輸入有效的數字")
         
         ttk.Button(dialog, text="開始測試", command=confirm).pack(pady=10)
     
-    def _run_random_test_thread(self, count):
+    def _run_random_test_thread(self, count, view_mode="select"):
         """在執行緒中執行隨機測試"""
         def test():
             try:
                 # 使用 queue 來傳遞日誌訊息
                 log_queue = queue.Queue()
-                
+                results_queue = queue.Queue()
+
                 def log_message(msg, tag='info'):
                     log_queue.put((msg, tag))
                 
@@ -844,16 +1119,17 @@ class BaseballPredictorGUI:
                     
                     result = self.engine.run_inference(
                         speed, angle, spray,
-                        Is_plot=True,  # 讓圖表進入待處理佇列
+                        Is_plot=False,  # 不立刻顯示圖表，等測試結束後統一處理
                         Video_save=self.save_video_var.get(),
                         ev_boost=ev_boost,
                         dist_boost=dist_boost
                     )
                     
                     results.append(result)
+                    results_queue.put((i+1, result))
                 
                 # 在主執行緒中更新 UI
-                self.root.after(0, lambda: self._update_after_random_test(results, log_queue))
+                self.root.after(0, lambda: self._handle_random_test_results(results, view_mode, log_queue))
                 
             except Exception as e:
                 self.root.after(0, lambda: self.log_message(f"隨機測試失敗: {e}", 'error'))
@@ -863,6 +1139,34 @@ class BaseballPredictorGUI:
         thread.daemon = True
         thread.start()
     
+    def _handle_random_test_results(self, results, view_mode, log_queue):
+        """處理隨機測試結果（在主執行緒中執行）"""
+        try:
+            # 處理佇列中的日誌訊息
+            while not log_queue.empty():
+                msg, tag = log_queue.get_nowait()
+                self.log_message(msg, tag)
+            
+            # 更新統計
+            for result in results:
+                self.prediction_history.append(result)
+            
+            self.update_stats_display()
+            self.log_message(f"\n隨機測試完成，共 {len(results)} 組")
+            
+            # 根據選擇模式顯示結果
+            if view_mode == "last":
+                # 顯示最後一組
+                last_result = results[-1]
+                self._show_selected_results([last_result])
+                self.log_message("已顯示最後一組測試結果")
+            else:
+                # 開啟選擇視窗
+                self._show_result_selector(results)
+                
+        except Exception as e:
+            self.log_message(f"處理結果時出錯: {e}", 'error')
+
     def _update_after_random_test(self, results, log_queue):
         """隨機測試完成後的更新（在主執行緒中執行）"""
         try:
@@ -902,6 +1206,29 @@ class BaseballPredictorGUI:
         if not file_path:
             return
         
+        # 詢問處理後的顯示方式
+        dialog = tk.Toplevel(self.root)
+        dialog.title("批量處理設定")
+        dialog.geometry("350x150")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        ttk.Label(dialog, text="批量處理完成後:").pack(pady=10)
+        
+        view_option = tk.StringVar(value="none")
+        ttk.Radiobutton(dialog, text="不顯示結果", 
+                    variable=view_option, value="none").pack()
+        ttk.Radiobutton(dialog, text="開啟選擇視窗手動選擇", 
+                    variable=view_option, value="select").pack()
+        
+        def confirm():
+            dialog.destroy()
+            self._run_batch_process_thread(file_path, view_option.get())
+        
+        ttk.Button(dialog, text="開始處理", command=confirm).pack(pady=10)
+
+    def _run_batch_process_thread(self, file_path, view_mode):
+        """在執行緒中執行批量處理"""
         def process():
             try:
                 log_queue = queue.Queue()
@@ -953,7 +1280,8 @@ class BaseballPredictorGUI:
                 output_df.to_csv(output_path, index=False, encoding='utf-8-sig')
                 
                 # 在主執行緒中更新 UI
-                self.root.after(0, lambda: self._update_after_batch(results, output_path, log_queue))
+                self.root.after(0, lambda: self._handle_batch_results(
+                    results, output_path, view_mode, log_queue))
                 
             except Exception as e:
                 self.root.after(0, lambda: self.log_message(f"批量處理失敗: {e}", 'error'))
@@ -962,6 +1290,28 @@ class BaseballPredictorGUI:
         thread = threading.Thread(target=process)
         thread.daemon = True
         thread.start()
+
+    def _handle_batch_results(self, results, output_path, view_mode, log_queue):
+        """處理批量處理結果（在主執行緒中執行）"""
+        try:
+            # 處理佇列中的日誌訊息
+            while not log_queue.empty():
+                msg, tag = log_queue.get_nowait()
+                self.log_message(msg, tag)
+            
+            # 更新統計
+            for result in results:
+                self.prediction_history.append(result)
+            
+            self.update_stats_display()
+            self.log_message(f"\n批量處理完成，結果已儲存至: {output_path}")
+            
+            # 根據選擇模式顯示結果
+            if view_mode == "select":
+                self._show_result_selector(results)
+            
+        except Exception as e:
+            self.log_message(f"處理結果時出錯: {e}", 'error')
     
     def _update_after_batch(self, results, output_path, log_queue):
         """批量處理完成後的更新（在主執行緒中執行）"""
@@ -1077,12 +1427,33 @@ class BaseballPredictorGUI:
                 command=save_realtime_results).pack(side=tk.LEFT, padx=5)
     
     def update_stats_display(self):
-        """更新統計資訊顯示"""
-        self.stats_text.delete(1.0, tk.END)
+        """更新統計資訊顯示和歷史記錄列表"""
+        # 清除並重新填充歷史記錄列表
+        self.history_listbox.delete(0, tk.END)
         
         if not self.prediction_history:
+            self.history_listbox.insert(tk.END, "尚無預測記錄")
+            self.stats_text.delete(1.0, tk.END)
             self.stats_text.insert(tk.END, "尚無預測記錄")
             return
+        
+        # 填充歷史記錄列表
+        for i, r in enumerate(self.prediction_history):
+            # 格式化顯示文字
+            display_text = f"{i+1:3d}. {r['result_class']:8s} | "
+            display_text += f"{r['input_speed']:5.1f}mph | "
+            display_text += f"{r['input_angle']:5.1f}° | "
+            display_text += f"{r['input_spray']:5.1f}° | "
+            display_text += f"{r['pred_dist_ft']:5.1f}ft"
+            
+            # 標記界外球
+            if r.get('is_foul', False):
+                display_text += " ⚠️"
+            
+            self.history_listbox.insert(tk.END, display_text)
+        
+        # 更新統計資訊文字
+        self.stats_text.delete(1.0, tk.END)
         
         # 計算統計
         total = len(self.prediction_history)
@@ -1092,7 +1463,7 @@ class BaseballPredictorGUI:
         from collections import Counter
         counter = Counter(results)
         
-        self.stats_text.insert(tk.END, f"📊 預測統計 (共 {total} 筆)\n")
+        self.stats_text.insert(tk.END, f"預測統計 (共 {total} 筆)\n")
         self.stats_text.insert(tk.END, f"{'='*40}\n\n")
         
         self.stats_text.insert(tk.END, "結果分布:\n")
@@ -1105,17 +1476,18 @@ class BaseballPredictorGUI:
         # 平均數據
         avg_speed = np.mean([r['input_speed'] for r in self.prediction_history])
         avg_dist = np.mean([r['pred_dist_ft'] for r in self.prediction_history])
+        avg_hit_prob = np.mean([r['hit_prob'] for r in self.prediction_history])
         
         self.stats_text.insert(tk.END, f"平均初速: {avg_speed:.1f} mph\n")
         self.stats_text.insert(tk.END, f"平均距離: {avg_dist:.1f} ft\n")
+        self.stats_text.insert(tk.END, f"平均命中機率: {avg_hit_prob:.1%}\n\n")
         
-        # 最近 10 筆記錄
-        self.stats_text.insert(tk.END, f"\n📝 最近預測記錄:\n")
-        for r in self.prediction_history[-10:]:
-            self.stats_text.insert(tk.END, 
-                f"  {r['input_speed']:.0f}mph, {r['input_angle']:.0f}°, "
-                f"{r['input_spray']:.0f}° -> {r['result_class']}\n"
-            )
+        # 長打率統計
+        hr_count = counter.get('HR', 0)
+        xbh_count = counter.get('DOUBLE', 0) + counter.get('TRIPLE', 0) + hr_count
+        self.stats_text.insert(tk.END, f"全壘打: {hr_count} 支\n")
+        self.stats_text.insert(tk.END, f"長打: {xbh_count} 支 ({xbh_count/total*100:.1f}%)\n")
+        self.stats_text.insert(tk.END, f"界外球: {counter.get('Foul', 0)} 球\n")
     
     def update_park_info(self):
         """更新球場資訊顯示"""
@@ -1374,6 +1746,45 @@ class BaseballPredictorGUI:
 
      # 在關閉視窗時取消所有 after 任務
     
+    def _show_result_selector(self, results):
+        """顯示結果選擇視窗"""
+        try:
+            selector = ResultSelectorDialog(self.root, results, "選擇要查看的測試結果")
+            self.root.wait_window(selector.dialog)
+            
+            selected_results = selector.get_selected_results()
+            if selected_results:
+                self._show_selected_results(selected_results)
+            else:
+                self.log_message("未選擇任何結果")
+                
+        except Exception as e:
+            self.log_message(f"開啟選擇視窗失敗: {e}", 'error')
+
+    def _show_selected_results(self, results):
+        """顯示選中的結果在原本的圖表頁面中"""
+        try:
+            if not results:
+                return
+            
+            # 儲存當前顯示的結果列表和索引
+            self.current_display_results = results
+            self.current_display_index = 0
+            
+            # 顯示第一筆
+            self._display_current_result()
+            
+            # 切換到結果圖表頁面
+            self.notebook.select(1)
+            
+            # 如果只有一筆結果，可以考慮禁用導航按鈕（可選）
+            if len(results) == 1:
+                # 這裡可以添加禁用按鈕的邏輯
+                pass
+            
+        except Exception as e:
+            self.log_message(f"顯示選中結果失敗: {e}", 'error')
+
     def on_closing(self):
         """關閉視窗時的處理"""
         try:
@@ -1442,6 +1853,73 @@ class BaseballPredictorGUI:
             self.engine.video_recorder.process_pending_videos()
         except Exception as e:
             self.log_message(f"處理影片任務失敗: {e}", 'error')
+
+    def _display_current_result(self):
+        """顯示當前索引的結果"""
+        if not hasattr(self, 'current_display_results'):
+            return
+        
+        results = self.current_display_results
+        idx = self.current_display_index
+        
+        if idx >= len(results):
+            return
+        
+        result = results[idx]
+        
+        # 顯示靜態圖表
+        self._show_single_plot(result)
+        
+        # 顯示動畫
+        if self.show_animation_var.get() and result['trajectory'] is not None:
+            self._show_single_animation(result['trajectory'], result)
+        
+        # 更新計數器標籤
+        self.update_result_counter()
+        
+        self.log_message(f"顯示第 {idx+1}/{len(results)} 筆結果")
+
+    def add_navigation_buttons(self):
+        """在圖表頁面添加導航按鈕"""
+        nav_frame = ttk.Frame(self.plot_frame)
+        nav_frame.pack(fill=tk.X, padx=5, pady=2)
+        
+        ttk.Button(nav_frame, text="◀ 上一筆", 
+                command=self.show_previous_result).pack(side=tk.LEFT, padx=2)
+        ttk.Button(nav_frame, text="下一筆 ▶", 
+                command=self.show_next_result).pack(side=tk.LEFT, padx=2)
+        
+        self.result_counter_label = ttk.Label(nav_frame, text="")
+        self.result_counter_label.pack(side=tk.LEFT, padx=10)
+
+    def show_previous_result(self):
+        """顯示上一筆結果"""
+        if not hasattr(self, 'current_display_results'):
+            return
+        
+        if self.current_display_index > 0:
+            self.current_display_index -= 1
+            self._display_current_result()
+            self.update_result_counter()
+
+    def show_next_result(self):
+        """顯示下一筆結果"""
+        if not hasattr(self, 'current_display_results'):
+            return
+        
+        if self.current_display_index < len(self.current_display_results) - 1:
+            self.current_display_index += 1
+            self._display_current_result()
+            self.update_result_counter()
+
+    def update_result_counter(self):
+        """更新結果計數器顯示"""
+        if hasattr(self, 'current_display_results') and hasattr(self, 'result_counter_label'):
+            total = len(self.current_display_results)
+            current = self.current_display_index + 1
+            self.result_counter_label.config(text=f"第 {current}/{total} 筆")
+        elif hasattr(self, 'result_counter_label'):
+            self.result_counter_label.config(text="")
 
 def main():
     """主程式入口"""
